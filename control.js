@@ -1,0 +1,2514 @@
+
+
+const { ipcRenderer } = require('electron');
+
+let testChatHistory = [];
+let isNextFollowUp = false;
+
+ipcRenderer.on('toggle-followup-remote', () => {
+  isNextFollowUp = !isNextFollowUp;
+  ipcRenderer.send('followup-state-changed', isNextFollowUp);
+  setStatus(isNextFollowUp ? '🔁 Next question flagged as Follow-up' : '🔁 Follow-up flag cleared');
+});
+
+const $ = id => document.getElementById(id);
+
+let recognition = null;
+let sysAnalyser = null;
+let sysAudioData = null;
+let isListening = false;
+let finalTranscript = '';
+let candidateTranscript = '';
+let candidateFinalTranscript = '';
+let silenceTimer = null;
+// Single source of truth: trigger the AI answer exactly 1.2s after the interviewer pauses
+const PAUSE_MS = 1200;
+let silenceThresholdDb = -45;
+let isGenerating = false;
+let isLongQuestionMode = false;
+let activeAbortController = null;
+let usageCount = 0;
+let currentSessionQA = [];
+let sessionStart = null;
+let testMode = false;
+let currentProvider = 'claude'; // 'claude', 'grok', 'deepgram', or 'zai'
+let resumeFiles = [];
+let referenceFiles = [];
+let envConfig = {};
+let currentZaiModel = 'glm-4.7-flash';
+let chatgptPromptApproved = false;
+let chatgptPromptOverride = '';
+let chatgptPromptResolver = null;
+
+// ADVANCED CONFIG STATE
+let currentRole = 'Software Engineer';
+let selectedTechs = new Set(["Salesforce", "Apex", "Lightning Web Components (LWC)", "SOQL", "SOSL", "Flow", "Experience Cloud", "Service Cloud", "Sales Cloud", "Marketing Cloud"]);
+let speakingStyle = 'Professional Indian English (Default)';
+let jdTextData = '';
+
+// Provider config map
+const PROVIDERS = {
+    claude: {
+    label: 'Anthropic API Key',
+    placeholder: 'sk-ant-api03-...',
+    hint: 'Get yours at console.anthropic.com · Stored locally only.',
+    apiBase: 'https://api.anthropic.com/v1',
+    model: 'claude-3-5-sonnet-20241022',
+  },
+  deepgram: {
+    label: 'Deepgram API Key',
+    placeholder: 'deepgram-api-key...',
+    hint: 'Free $200 credit at deepgram.com · No credit card needed.',
+    apiBase: 'https://api.deepgram.com',
+    model: 'nova-3',
+  },
+  zai: {
+    label: 'Z.AI API Key',
+    placeholder: 'Your Z.AI API key...',
+    hint: 'GLM-4-Flash is FREE. Get key at z.ai — Stored locally.',
+    apiBase: 'https://api.z.ai/v1',
+    model: 'glm-4-flash',
+  },
+  groq: {
+    label: 'Groq API Key',
+    placeholder: 'gsk_...',
+    hint: 'Get yours at console.groq.com — Stored locally.',
+    apiBase: 'https://api.groq.com/openai/v1',
+    model: 'openai/gpt-oss-120b',
+  },
+  gemini: {
+    label: 'Gemini API Key',
+    placeholder: 'AIzaSy...',
+    hint: 'Get yours at aistudio.google.com · Stored locally only.',
+    apiBase: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    model: 'gemini-3.5-flash-lite',
+  },
+  gemini2: {
+    label: 'Gemini 2 API Key',
+    placeholder: 'AIzaSy...',
+    hint: 'Get yours at aistudio.google.com · Stored locally only.',
+    apiBase: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    model: 'gemini-2.5-flash',
+  },
+  chatgpt: {
+    label: 'OpenAI API Key (ChatGPT)',
+    placeholder: 'sk-...',
+    hint: 'Get yours at platform.openai.com · Stored locally only.',
+    apiBase: 'https://api.openai.com/v1',
+    model: 'gpt-5.6-luna',
+  }
+};
+
+// ── TECH DICTIONARY ──────────────────────────────────────
+const TECH_CATEGORIES = {
+  "Programming Languages": ["Java", "Python", "JavaScript", "TypeScript", "C#", "C++", "Go", "PHP", "Kotlin", "Swift", "Rust", "SQL"],
+  "Frontend": ["React", "Angular", "Vue.js", "Next.js", "HTML", "CSS", "Tailwind CSS", "Bootstrap"],
+  "Backend": ["Node.js", "Express.js", "NestJS", "Spring Boot", "Spring Framework", "Django", "Flask", "FastAPI", "ASP.NET", "Laravel"],
+  "Databases": ["MySQL", "PostgreSQL", "Oracle Database", "SQL Server", "MongoDB", "Redis", "Cassandra", "DynamoDB", "Firebase", "Elasticsearch"],
+  "Cloud Platforms": ["AWS", "Microsoft Azure", "Google Cloud Platform (GCP)", "Oracle Cloud Infrastructure (OCI)", "IBM Cloud", "DigitalOcean"],
+  "DevOps & Infrastructure": ["Docker", "Kubernetes", "Jenkins", "GitHub Actions", "GitLab CI/CD", "Azure DevOps", "Terraform", "Ansible", "Helm", "Linux", "Nginx", "Apache"],
+  "Enterprise Platforms": ["Salesforce", "Apex", "Lightning Web Components (LWC)", "SOQL", "SOSL", "Flow", "Experience Cloud", "Service Cloud", "Sales Cloud", "Marketing Cloud", "ServiceNow", "ITSM", "ITOM", "CMDB", "Flow Designer", "IntegrationHub", "SAP", "SAP S/4HANA", "SAP BTP", "Oracle ERP", "Oracle Fusion", "Microsoft Dynamics 365", "Workday", "SuccessFactors", "NetSuite", "MuleSoft", "Informatica", "Boomi", "Pega"],
+  "AI & LLM Technologies": ["OpenAI", "Claude", "Gemini", "LangChain", "LangGraph", "MCP", "RAG", "LlamaIndex", "Hugging Face", "TensorFlow", "PyTorch", "Pinecone", "Weaviate", "ChromaDB"],
+  "Data Engineering": ["Apache Spark", "Hadoop", "Kafka", "Airflow", "Databricks", "Snowflake", "BigQuery", "Redshift"],
+  "Testing": ["Selenium", "Cypress", "Playwright", "Postman", "JMeter", "JUnit", "Jest", "PyTest"],
+  "Mobile": ["Android", "iOS", "Flutter", "React Native"],
+  "Security": ["OAuth", "JWT", "Okta", "Auth0", "IAM", "Cybersecurity"],
+};
+
+// ── TECH SELECTION LOGIC ─────────────────────────────────
+function renderTechGrid(filter = '') {
+  const grid = $('techGrid');
+  const term = filter.toLowerCase();
+  let html = '';
+  
+  for (const [cat, techs] of Object.entries(TECH_CATEGORIES)) {
+    const filteredTechs = techs.filter(t => t.toLowerCase().includes(term));
+    if (filteredTechs.length === 0) continue;
+    
+    html += `<div class="tech-category">`;
+    html += `<div class="tech-category-title">${cat}</div>`;
+    html += `<div class="tech-pills">`;
+    filteredTechs.forEach(t => {
+      const isSelected = selectedTechs.has(t);
+      html += `<div class="pill ${isSelected ? 'active' : ''}" onclick="toggleTech('${t}')">${esc(t)}</div>`;
+    });
+    html += `</div></div>`;
+  }
+  grid.innerHTML = html;
+}
+
+function renderSelectedTechs() {
+  const area = $('techSelectedArea');
+  if (selectedTechs.size === 0) {
+    area.innerHTML = '';
+    return;
+  }
+  let html = '';
+  selectedTechs.forEach(t => {
+    html += `<div class="pill active" style="background:var(--accent);color:#fff;border-color:var(--accent);">
+      ${esc(t)}
+      <button class="pill-remove" onclick="toggleTech('${t}')" style="display:flex;color:#fff;">✕</button>
+    </div>`;
+  });
+  area.innerHTML = html;
+}
+
+function toggleTech(tech) {
+  if (selectedTechs.has(tech)) {
+    selectedTechs.delete(tech);
+  } else {
+    selectedTechs.add(tech);
+  }
+  chatgptPromptApproved = false;
+  chatgptPromptOverride = '';
+  $('techSearch').value = '';
+  renderTechGrid();
+  renderSelectedTechs();
+}
+
+function filterTechs(val) {
+  renderTechGrid(val);
+}
+
+function addCustomTech() {
+  const val = $('techSearch').value.trim();
+  if (val && !selectedTechs.has(val)) {
+    selectedTechs.add(val);
+    chatgptPromptApproved = false;
+    chatgptPromptOverride = '';
+    $('techSearch').value = '';
+    renderTechGrid();
+    renderSelectedTechs();
+  }
+}
+
+function handleTechKeyPress(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    addCustomTech();
+  }
+}
+
+// ── SETUP LOGIC ──────────────────────────────────────────
+function handleRoleChange() {
+  const val = $('roleSelect').value;
+  if (val === 'Other') {
+    $('customRoleInput').style.display = 'block';
+    $('customRoleInput').focus();
+  } else {
+    $('customRoleInput').style.display = 'none';
+  }
+}
+
+
+
+let globalAudioCtx = null;
+
+function refreshSetupStateFromInputs() {
+  const selRole = $('roleSelect')?.value || currentRole || 'Software Engineer';
+  const customRole = $('customRoleInput')?.value?.trim() || '';
+  currentRole = selRole === 'Other' ? (customRole || 'General Candidate') : selRole;
+  jdTextData = $('jdText')?.value?.trim() || jdTextData || '';
+  speakingStyle = $('speakingStyleSelect')?.value || speakingStyle;
+  return { selRole, customRole };
+}
+
+function beginInterviewListening() {
+  if (!isListening) {
+    toggleMic();
+    setTimeout(() => ipcRenderer.send('mic-state-changed', true), 500);
+  }
+  // Hide tabs and titlebar
+  document.querySelector('.tabs').style.display = 'none';
+  document.querySelector('.titlebar').style.display = 'none';
+  ipcRenderer.send('set-control-taskbar', true);
+  setStatus('✓ Interview started — listening for questions');
+  // Hide the app window
+  setTimeout(() => {
+    ipcRenderer.send('hide-control-window');
+    ipcRenderer.send('show-overlay');
+  }, 500);
+}
+
+async function startFullInterview() {
+  refreshSetupStateFromInputs();
+  beginInterviewListening();
+}
+
+function prepareInterview() {
+  // Extract all setup data
+  const { selRole, customRole } = refreshSetupStateFromInputs();
+  chatgptPromptApproved = false;
+  chatgptPromptOverride = '';
+  
+  // Save to persistent settings
+  saveS({
+    setupRole: selRole,
+    setupCustomRole: customRole,
+    setupTechs: Array.from(selectedTechs),
+    setupJd: jdTextData,
+    setupStyle: speakingStyle
+  });
+  
+  // Show Loading Overlay
+  $('setupOverlay').style.display = 'flex';
+  
+  // Simulate processing time for heavy background prompt building / caching
+    setTimeout(async () => {
+    $('setupOverlay').style.display = 'none';
+    document.querySelector('.tabs').style.display = 'none';
+    document.querySelector('.titlebar').style.display = 'none'; // Hide titlebar as requested
+    ipcRenderer.send('set-control-taskbar', true);
+    switchTab('live', document.querySelector('.tabs .tab:nth-child(1)'));
+    setStatus('✓ AI Interviewer prepared for ' + currentRole);
+    // Auto-start mic and hide window
+    if (!isListening) {
+        toggleMic();
+        setTimeout(() => ipcRenderer.send('mic-state-changed', true), 500);
+    }
+    ipcRenderer.send('hide-control-window');
+    ipcRenderer.send('show-overlay');
+  }, 2000);
+}
+
+function endInterview() {
+  try {
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
+    isGenerating = false;
+    $('askBtn').disabled = false;
+    
+    // Stop mic if running
+    if (isListening) toggleMic();
+    // Show the app window first
+    ipcRenderer.send('show-control-window');
+    ipcRenderer.send('hide-overlay');
+    // Clear the overlay chat
+    ipcRenderer.send('answer-clear');
+    document.querySelector('.tabs').style.display = 'flex';
+    document.querySelector('.titlebar').style.display = 'flex';
+    ipcRenderer.send('set-control-taskbar', false);
+    switchTab('live', document.querySelector('.tabs .tab:nth-child(1)'));
+    setStatus('Interview ended. Ready to start again.');
+  } catch (err) {
+    alert("Error ending interview: " + err.message + "\n" + err.stack);
+  }
+}
+
+
+// ── AI PROVIDER & MODEL SELECTOR ──────────────────────────────────
+function handleAiProviderChange() {
+  const provider = $('aiProviderSelect').value;
+  chatgptPromptApproved = false;
+  
+  if (provider === 'chatgpt') {
+    $('editChatgptPromptBtn').style.display = 'block';
+  } else {
+    $('editChatgptPromptBtn').style.display = 'none';
+  }
+
+  // Save old API key before switching
+  const currentKey = $('apiKey').value.trim();
+  if (currentKey && currentProvider && currentProvider !== 'deepgram') {
+    ipcRenderer.invoke('save-api-key', { provider: currentProvider, key: currentKey });
+  }
+
+  currentProvider = provider;
+  const cfg = PROVIDERS[provider];
+  
+  $('apiKey').placeholder = cfg.placeholder;
+  $('apiKeyHint').textContent = cfg.hint;
+
+  const savedKey = (envConfig.savedApiKeys && envConfig.savedApiKeys[provider]) || '';
+  $('apiKey').value = savedKey;
+
+  populateAiModels(provider);
+  saveS({ provider });
+  setStatus('Switched AI Provider to ' + provider.toUpperCase());
+}
+
+function populateAiModels(provider) {
+  const modelSelect = $('aiModelSelect');
+  modelSelect.innerHTML = '';
+  
+  let models = [];
+  if (provider === 'claude') {
+    models = [
+      { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (Latest)' },
+      { id: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (Latest)' },
+      { id: 'claude-3-5-sonnet-20240620', label: 'Claude 3.5 Sonnet (Legacy)' },
+      { id: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
+      { id: 'claude-3-sonnet-20240229', label: 'Claude 3 Sonnet' },
+      { id: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' }
+    ];
+    if (!models.map(m => m.id).includes(PROVIDERS.claude.model)) {
+      PROVIDERS.claude.model = 'claude-3-5-sonnet-20241022';
+    }
+  } else if (provider === 'zai') {
+    models = [
+      { id: 'glm-5.2', label: 'GLM-5.2 (Latest Flagship)' },
+      { id: 'glm-5.1', label: 'GLM-5.1' },
+      { id: 'glm-5', label: 'GLM-5' },
+      { id: 'glm-4.7', label: 'GLM-4.7' },
+      { id: 'glm-4.7-flash', label: 'GLM-4.7-Flash (Free)' },
+      { id: 'glm-4.6', label: 'GLM-4.6' },
+      { id: 'glm-4-plus', label: 'GLM-4-Plus' }
+    ];
+    if (!models.map(m => m.id).includes(PROVIDERS.zai.model)) {
+      PROVIDERS.zai.model = 'glm-4.7-flash';
+    }
+  } else if (provider === 'gemini') {
+    models = [
+      { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite (Default)' },
+      { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+      { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' }
+    ];
+    if (!models.map(m => m.id).includes(PROVIDERS.gemini.model)) {
+      PROVIDERS.gemini.model = 'gemini-3.5-flash-lite';
+    }
+  } else if (provider === 'gemini2') {
+    models = [
+      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Verified Flagship)' },
+      { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite' },
+      { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' }
+    ];
+    if (!models.map(m => m.id).includes(PROVIDERS.gemini2.model)) {
+      PROVIDERS.gemini2.model = 'gemini-2.5-flash';
+    }
+  } else if (provider === 'groq') {
+    models = [
+      { id: 'openai/gpt-oss-120b', label: 'OpenAI GPT OSS 120B (High-Speed Flagship)' },
+      { id: 'qwen/qwen3.6-27b', label: 'Qwen 3.6 27B (Vision & Code)' },
+      { id: 'openai/gpt-oss-20b', label: 'OpenAI GPT OSS 20B (Ultra-Fast)' }
+    ];
+    if (!models.map(m => m.id).includes(PROVIDERS.groq.model)) {
+      PROVIDERS.groq.model = 'openai/gpt-oss-120b';
+    }
+  } else if (provider === 'chatgpt') {
+    models = [
+      { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (Fast & Uncensored)' }
+    ];
+    if (!models.map(m => m.id).includes(PROVIDERS.chatgpt.model)) {
+      PROVIDERS.chatgpt.model = 'gpt-5.6-luna';
+    }
+  }
+
+  models.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.label;
+    modelSelect.appendChild(opt);
+  });
+  
+  modelSelect.value = PROVIDERS[provider].model;
+}
+function saveAiModel() {
+  if (!currentProvider) return;
+  const selectedModel = $('aiModelSelect').value;
+  PROVIDERS[currentProvider].model = selectedModel;
+  
+  if (currentProvider === 'zai') {
+    currentZaiModel = selectedModel;
+    saveS({ zaiModel: selectedModel });
+  } else {
+    saveS({ [currentProvider + 'Model']: selectedModel });
+  }
+  setStatus('Model updated to ' + selectedModel);
+}
+
+// ── TEST MODE ─────────────────────────────────────────────
+function toggleTestMode() {
+  testMode = !testMode;
+  const toggle = $('testModeToggle');
+  const thumb = $('testModeThumb');
+  const label = $('testModeLabel');
+  if (testMode) {
+    toggle.style.background = 'rgba(239,159,39,0.3)';
+    toggle.style.borderColor = 'rgba(239,159,39,0.5)';
+    thumb.style.background = 'var(--warning)';
+    thumb.style.left = '18px';
+    label.textContent = 'ON';
+    label.style.color = 'var(--warning)';
+    setStatus('🧪 Test Mode ON — using mock responses');
+  } else {
+    toggle.style.background = 'var(--bg3)';
+    toggle.style.borderColor = 'var(--border2)';
+    thumb.style.background = 'var(--text3)';
+    thumb.style.left = '2px';
+    label.textContent = 'OFF';
+    label.style.color = 'var(--text3)';
+    setStatus('Test Mode OFF — using real API');
+  }
+}
+
+const MOCK_TRANSCRIPTS = [
+  "Tell me about yourself and your background.",
+  "Describe a challenge you overcame at work.",
+  "Why do you want to work at this company?",
+  "Tell me about a time you worked in a team.",
+  "What is your biggest weakness?"
+];
+let mockTranscriptIndex = 0;
+function getMockTranscript() {
+  const t = MOCK_TRANSCRIPTS[mockTranscriptIndex % MOCK_TRANSCRIPTS.length];
+  mockTranscriptIndex++;
+  return t;
+}
+
+const MOCK_ANSWERS = {
+  default: [
+    "Great question! ", "Let me walk you through ", "my approach.\n\n",
+    "**Situation:** ", "In my previous role, ", "I faced a similar challenge ", "that required careful thought.\n\n",
+    "**Task:** ", "My responsibility was to ", "deliver a solution ", "within a tight deadline.\n\n",
+    "**Action:** ", "I broke the problem down ", "into smaller steps, ", "collaborated with the team, ",
+    "and used data to guide decisions.\n\n",
+    "**Result:** ", "We delivered on time, ", "improved efficiency by 30%, ",
+    "and the client was extremely satisfied. ", "This taught me the importance of ",
+    "structured thinking and clear communication."
+  ]
+};
+
+async function mockTranscribeChunk() {
+  await new Promise(r => setTimeout(r, 800 + Math.random() * 600));
+  return getMockTranscript();
+}
+async function mockAskQuestion(question, isTest = false) {
+  const chunks = MOCK_ANSWERS.default;
+  for (const chunk of chunks) {
+    await new Promise(r => setTimeout(r, 40 + Math.random() * 60));
+    ipcRenderer.send(isTest ? 'test-ai-chunk' : 'answer-chunk', chunk);
+  }
+}
+
+// ── INIT ──────────────────────────────────────────────────
+(async () => {
+  const s = await ipcRenderer.invoke('get-settings');
+  envConfig = await ipcRenderer.invoke('get-env-config');
+  
+  // Restore Setup State
+  if (s.setupRole) {
+    $('roleSelect').value = s.setupRole;
+    handleRoleChange();
+    currentRole = s.setupRole === 'Other' ? (s.setupCustomRole || 'General Candidate') : s.setupRole;
+  }
+  if (s.setupCustomRole) {
+    $('customRoleInput').value = s.setupCustomRole;
+  }
+  if (s.setupTechs && Array.isArray(s.setupTechs)) {
+    s.setupTechs.forEach(t => selectedTechs.add(t));
+  }
+  if (s.setupJd) {
+    $('jdText').value = s.setupJd;
+    jdTextData = s.setupJd;
+  }
+  if (s.setupStyle) {
+    $('speakingStyleSelect').value = s.setupStyle;
+    speakingStyle = s.setupStyle;
+  }
+
+  if (envConfig.zAiApiBase) PROVIDERS.zai.apiBase = envConfig.zAiApiBase;
+  if (s.deepgramApiKey) $('deepgramApiKey').value = s.deepgramApiKey;
+  window.savedMicDeviceId = s.selectedMicDeviceId || '';
+
+  if (s.zaiModel) PROVIDERS.zai.model = s.zaiModel;
+  if (s.claudeModel) PROVIDERS.claude.model = s.claudeModel;
+  if (s.grokModel) PROVIDERS.grok.model = s.grokModel;
+  if (s.geminiModel) PROVIDERS.gemini.model = s.geminiModel;
+  if (s.gemini2Model) PROVIDERS.gemini2.model = s.gemini2Model;
+  if (s.groqModel) PROVIDERS.groq.model = s.groqModel;
+
+  if (s.provider && s.provider !== 'deepgram') {
+    currentProvider = s.provider;
+    $('aiProviderSelect').value = s.provider;
+  } else {
+    currentProvider = 'claude';
+    $('aiProviderSelect').value = 'claude';
+  }
+
+  if (currentProvider === 'chatgpt') {
+    $('editChatgptPromptBtn').style.display = 'block';
+  }
+
+  // Populate models dropdown
+  populateAiModels(currentProvider);
+
+  // Set API Key input
+  const cfg = PROVIDERS[currentProvider];
+  $('apiKey').placeholder = cfg.placeholder;
+  $('apiKeyHint').textContent = cfg.hint;
+
+  let savedKey = (envConfig.savedApiKeys && envConfig.savedApiKeys[currentProvider]) || s.apiKey || '';
+  if (!savedKey && (currentProvider === 'gemini' || currentProvider === 'gemini2')) {
+    savedKey = (envConfig.savedApiKeys && (envConfig.savedApiKeys.gemini || envConfig.savedApiKeys.gemini2)) || s.apiKey || '';
+  }
+  $('apiKey').value = savedKey;
+
+  if (currentProvider === 'zai' && !$('apiKey').value && envConfig.zaiApiKey) {
+    $('apiKey').value = envConfig.zaiApiKey;
+  }
+
+  if (s.opacity) { $('opacitySlider').value = Math.round(s.opacity * 100); $('opacityVal').textContent = Math.round(s.opacity * 100) + '%'; }
+  if (s.fontSize) { $('fsSlider').value = s.fontSize; $('fsVal').textContent = s.fontSize + 'px'; }
+  if (s.silenceThresholdDb !== undefined) {
+    silenceThresholdDb = Number(s.silenceThresholdDb);
+    $('silenceSlider').value = silenceThresholdDb;
+    $('silenceVal').textContent = silenceThresholdDb + ' dB';
+  }
+
+  const displays = await ipcRenderer.invoke('get-displays');
+  $('displaySelect').innerHTML = displays.map(d => `<option value="${d.index}">${d.label}</option>`).join('');
+
+  initReferenceUpload();
+  renderTechGrid();
+  renderSelectedTechs();
+  updateUsage();
+  loadAudioDevices();
+})();
+
+// ── SAVE HELPERS ──────────────────────────────────────────
+function saveApiKey() {
+  const key = $('apiKey').value.trim();
+  ipcRenderer.invoke('save-api-key', { provider: currentProvider, key });
+  if (!envConfig.savedApiKeys) envConfig.savedApiKeys = {};
+  envConfig.savedApiKeys[currentProvider] = key;
+  if (currentProvider === 'gemini') {
+    envConfig.savedApiKeys.gemini2 = key;
+    ipcRenderer.invoke('save-api-key', { provider: 'gemini2', key });
+  } else if (currentProvider === 'gemini2') {
+    envConfig.savedApiKeys.gemini = key;
+    ipcRenderer.invoke('save-api-key', { provider: 'gemini', key });
+  }
+  saveS({ apiKey: key, provider: currentProvider });
+}
+function saveS(patch) { ipcRenderer.invoke('get-settings').then(s => ipcRenderer.invoke('save-settings', { ...s, ...patch })); }
+
+// ── REFERENCE MATERIAL ────────────────────────────────────
+function initReferenceUpload() {
+  // Resume drop zone
+  const rDrop = $('resumeDrop');
+  if (rDrop) {
+    ['dragenter', 'dragover'].forEach(evt => rDrop.addEventListener(evt, e => {
+      e.preventDefault();
+      rDrop.classList.add('drag');
+    }));
+    ['dragleave', 'drop'].forEach(evt => rDrop.addEventListener(evt, e => {
+      e.preventDefault();
+      rDrop.classList.remove('drag');
+    }));
+    rDrop.addEventListener('drop', e => handleResumeFile(e.dataTransfer.files));
+  }
+
+  // Reference materials drop zone
+  const drop = $('referenceDrop');
+  if (drop) {
+    ['dragenter', 'dragover'].forEach(evt => drop.addEventListener(evt, e => {
+      e.preventDefault();
+      drop.classList.add('drag');
+    }));
+    ['dragleave', 'drop'].forEach(evt => drop.addEventListener(evt, e => {
+      e.preventDefault();
+      drop.classList.remove('drag');
+    }));
+    drop.addEventListener('drop', e => handleReferenceFiles(e.dataTransfer.files));
+  }
+}
+
+// ── CHUNK REFERENCE TEXT ──────────────────────────────────
+function chunkReferenceText(text) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  const chunks = [];
+  const size = 1800;
+  const overlap = 180;
+  for (let i = 0; i < clean.length; i += size - overlap) {
+    chunks.push(clean.slice(i, i + size));
+    if (chunks.length >= 600) break; // Supports entire 600+ page books!
+  }
+  return chunks;
+}
+
+// ── UNIVERSAL FILE PARSER ────────────────────────────────
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = reader.result || '';
+      const base64 = res.includes(',') ? res.split(',')[1] : res;
+      resolve(base64);
+    };
+    reader.onerror = err => reject(err);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function parseFileObject(file) {
+  const name = file.name || 'Document';
+  const size = file.size || 0;
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  let text = '';
+  let warning = '';
+
+  try {
+    if (['txt', 'md', 'markdown', 'csv', 'json', 'apex', 'cls', 'trigger', 'js', 'html', 'xml'].includes(ext)) {
+      text = await file.text();
+    } else if (ext === 'pdf') {
+      if (file.path) {
+        text = await ipcRenderer.invoke('parse-pdf-path', file.path);
+      }
+      if (!text || text.trim().length < 20) {
+        const b64 = await fileToBase64(file);
+        text = await ipcRenderer.invoke('parse-pdf-base64', b64);
+      }
+    } else if (ext === 'docx') {
+      if (file.path) {
+        text = await ipcRenderer.invoke('parse-docx-path', file.path);
+      }
+      if (!text) {
+        const b64 = await fileToBase64(file);
+        text = await ipcRenderer.invoke('parse-docx-base64', b64);
+      }
+    } else {
+      text = await file.text();
+    }
+  } catch (err) {
+    console.warn('Error parsing file:', name, err);
+    warning = err.message || 'Extraction error.';
+  }
+
+  const chunks = chunkReferenceText(text || '');
+  return {
+    name,
+    size,
+    type: ext,
+    text: text || '',
+    warning: warning || (text ? '' : (chunks.length ? '' : 'No text could be extracted.')),
+    chunks
+  };
+}
+
+// ── RESUME HANDLING ──────────────────────────────────────
+async function handleResumeFile(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  
+  $('resumeUploadProgress').style.display = 'block';
+  $('resumeUploadProgressFill').style.width = '30%';
+  setStatus('⏳ Parsing resume content...');
+  try {
+    const fileObj = await parseFileObject(files[0]);
+    $('resumeUploadProgressFill').style.width = '85%';
+    resumeFiles = [fileObj];
+    renderResumeFile();
+    setStatus('✓ Parsed & Ready: ' + fileObj.name + ' (' + fileObj.chunks.length + ' chunks)');
+  } catch (err) {
+    setStatus('Resume extraction error: ' + err.message);
+  } finally {
+    $('resumeUploadProgressFill').style.width = '100%';
+    setTimeout(() => {
+      $('resumeUploadProgress').style.display = 'none';
+      $('resumeUploadProgressFill').style.width = '0%';
+      $('resumeFile').value = '';
+    }, 350);
+  }
+}
+
+function renderResumeFile() {
+  const list = $('resumeFileList');
+  if (!list) return;
+  if (!resumeFiles.length) {
+    list.innerHTML = '';
+    $('resumeHint').textContent = 'Your resume is used for personal introductions, project stories, and career background.';
+    return;
+  }
+  const file = resumeFiles[0];
+  const isReady = file.chunks && file.chunks.length > 0;
+  list.innerHTML = `
+    <div class="file-item" style="border-left:4px solid var(--accent);background:rgba(29,158,117,0.12);padding:10px;border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <div>
+        <div class="file-name" style="font-weight:600;color:#e6edf3;font-size:13px;display:flex;align-items:center;gap:6px;">
+          <span>📄</span> ${esc(file.name)}
+        </div>
+        <div class="file-meta" style="color:var(--accent);font-weight:500;margin-top:4px;display:flex;align-items:center;gap:8px;">
+          <span>${formatBytes(file.size)}</span>
+          <span>•</span>
+          <span>${file.chunks.length} text chunk(s)</span>
+          <span>•</span>
+          <span style="background:rgba(29,158,117,0.2);color:#2dd4bf;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;">${isReady ? '✅ Parsed and ready for use' : '⚠️ No text detected'}</span>
+        </div>
+      </div>
+      <button class="file-remove btn-danger" style="cursor:pointer;padding:4px 8px;font-size:11px;" onclick="removeResumeFile()">Remove</button>
+    </div>
+  `;
+  $('resumeHint').textContent = '✓ Active in session: Used for personal introductions and career history.';
+}
+
+function removeResumeFile() {
+  resumeFiles = [];
+  renderResumeFile();
+  setStatus('Resume removed.');
+}
+
+// ── REFERENCE MATERIALS HANDLING ──────────────────────────
+async function handleReferenceFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+
+  $('uploadProgress').style.display = 'block';
+  $('uploadProgressFill').style.width = '25%';
+  setStatus('⏳ Parsing reference material...');
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const fileObj = await parseFileObject(files[i]);
+      referenceFiles.push(fileObj);
+      $('uploadProgressFill').style.width = Math.round(25 + (70 * (i + 1) / files.length)) + '%';
+    }
+    renderReferenceFiles();
+    const textCount = referenceFiles.filter(f => f.text || f.chunks.length).length;
+    setStatus(`✓ Parsed and ready: ${referenceFiles.length} reference document(s) loaded in session memory.`);
+  } catch (err) {
+    setStatus('Extraction error: ' + err.message);
+  } finally {
+    $('uploadProgressFill').style.width = '100%';
+    setTimeout(() => {
+      $('uploadProgress').style.display = 'none';
+      $('uploadProgressFill').style.width = '0%';
+      $('referenceFiles').value = '';
+    }, 350);
+  }
+}
+
+function renderReferenceFiles() {
+  const list = $('referenceList');
+  if (!list) return;
+  if (!referenceFiles.length) {
+    list.innerHTML = '';
+    $('referenceHint').textContent = 'These documents provide technical details, code patterns, and implementation notes.';
+    return;
+  }
+  list.innerHTML = referenceFiles.map((file, i) => {
+    const isReady = file.chunks && file.chunks.length > 0;
+    return `
+    <div class="file-item" style="border-left:4px solid var(--accent);background:rgba(29,158,117,0.08);padding:10px;border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+      <div>
+        <div class="file-name" style="font-weight:600;font-size:12px;color:#e6edf3;display:flex;align-items:center;gap:6px;">
+          <span>📚</span> ${esc(file.name)}
+        </div>
+        <div class="file-meta" style="color:var(--accent);margin-top:4px;display:flex;align-items:center;gap:8px;">
+          <span>${formatBytes(file.size)}</span>
+          <span>•</span>
+          <span>${file.chunks.length} text chunk(s)</span>
+          <span>•</span>
+          <span style="background:rgba(29,158,117,0.2);color:#2dd4bf;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;">${isReady ? '✅ Parsed and ready for use' : '⚠️ No text detected'}</span>
+        </div>
+      </div>
+      <button class="file-remove btn-danger" style="cursor:pointer;padding:4px 8px;font-size:11px;" onclick="removeReferenceFile(${i})">Remove</button>
+    </div>
+  `;
+  }).join('');
+  $('referenceHint').textContent = `✓ Active in session: ${referenceFiles.length} document(s) loaded in memory.`;
+}
+
+function removeReferenceFile(index) {
+  referenceFiles.splice(index, 1);
+  renderReferenceFiles();
+  setStatus(referenceFiles.length ? 'Reference file removed.' : 'All reference files removed.');
+}
+function buildResumeContext(question) {
+  if (!resumeFiles.length) return '';
+  const file = resumeFiles[0];
+  if (!file || !file.chunks.length) return '';
+  // If short resume, return all text
+  if (file.text && file.text.length <= 9000) {
+    return file.text;
+  }
+  // Otherwise perform search-weighted retrieval
+  const queryTerms = tokenizeForSearch(`${question} ${jdTextData} ${Array.from(selectedTechs).join(' ')}`);
+  const scored = file.chunks.map((chunk, index) => {
+    const haystack = chunk.toLowerCase();
+    let score = 0;
+    queryTerms.forEach(term => { if (haystack.includes(term)) score += 1; });
+    return { score, index, text: chunk };
+  });
+  return scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+    .map(item => item.text)
+    .join('\n\n')
+    .slice(0, 9000);
+}
+
+function buildReferenceContext(question) {
+  if (!referenceFiles.length) return '';
+  const queryTerms = tokenizeForSearch(`${question} ${jdTextData} ${Array.from(selectedTechs).join(' ')}`);
+  const scored = [];
+  for (const file of referenceFiles) {
+    if (!file.chunks.length) {
+      scored.push({ score: 0, file: file.name, text: `[Attached ${file.type || 'file'}: ${file.name}. ${file.warning || 'No text was extracted.'}]` });
+      continue;
+    }
+    file.chunks.forEach((chunk, index) => {
+      const haystack = chunk.toLowerCase();
+      let score = 0;
+      queryTerms.forEach(term => { if (haystack.includes(term)) score += 1; });
+      scored.push({ score, file: file.name, index, text: chunk });
+    });
+  }
+  return scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8)
+    .map(item => `Source: ${item.file}${item.index != null ? ` chunk ${item.index + 1}` : ''}\n${item.text}`)
+    .join('\n\n---\n\n')
+    .slice(0, 12000);
+}
+
+function tokenizeForSearch(value) {
+  const stop = new Set(['the','and','for','with','that','this','from','what','when','where','tell','about','your','you','are','was','were','how','why','can','could','would','should','interview','question']);
+  return Array.from(new Set(String(value || '').toLowerCase().match(/[a-z0-9]{3,}/g) || []))
+    .filter(term => !stop.has(term))
+    .slice(0, 40);
+}
+
+// 🎤 AUDIO STREAMS & SOCKETS ──────────────────────────────────────
+let micStream = null;
+let systemStream = null;
+let mediaRecorder = null;
+let systemMediaRecorder = null;
+let audioChunks = [];
+let whisperPollTimer = null;
+let dgSocket = null;
+let dgSysSocket = null;
+let sysMediaRecorder = null; 
+let dgSystemSocket = null;
+let dgHeartbeatTimer = null;
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+// ── TABS ──────────────────────────────────────────────────
+
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  $('panel-' + name).classList.add('active');
+  if (name === 'sessions') loadSessions();
+}
+
+// ── MICROPHONE ───────────────────────────────────────────
+const CHUNK_MS = 2500; 
+
+function getAudioConstraints() {
+  const deviceId = $('micDeviceSelect')?.value;
+  const base = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  if (!deviceId || deviceId === 'default') return base;
+  return { ...base, deviceId: { exact: deviceId } };
+}
+
+function getTrackLabel(stream, fallback = 'Default microphone') {
+  return stream?.getAudioTracks?.()[0]?.label || fallback;
+}
+
+function setActiveMicLabel(label) {
+  const activeLabel = label || 'Default microphone';
+  $('micSub').textContent = 'Active mic: ' + activeLabel;
+  const select = $('micDeviceSelect');
+  if (select) select.title = 'Active mic: ' + activeLabel;
+}
+
+function showCandidateTranscript(text) {
+  const cleanText = (text || '').trim();
+  if (!cleanText) return;
+  $('transcript').innerHTML = `<span class="t-final" style="color:var(--accent);">You: ${esc(cleanText)}</span>`;
+}
+
+async function handleMicDeviceChange() {
+  const select = $('micDeviceSelect');
+  if (!select) return;
+  window.savedMicDeviceId = select.value;
+  saveS({ selectedMicDeviceId: select.value });
+  setStatus('Microphone changed. Testing selected input...');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: getAudioConstraints(), video: false });
+    setActiveMicLabel(getTrackLabel(stream));
+    stream.getTracks().forEach(t => t.stop());
+    clearMicError();
+  } catch (err) {
+    showMicError('Selected mic is unavailable: ' + err.message);
+  }
+  if (isListening) {
+    stopMic();
+    startMic();
+  }
+}
+
+function handleSysDeviceChange() {
+  const sysSelect = $('sysDeviceSelect');
+  if (!sysSelect) return;
+  window.savedSysDeviceId = sysSelect.value;
+  saveS({ selectedSysDeviceId: sysSelect.value });
+  setStatus('Interviewer Audio Source changed.');
+  if (isListening) {
+    stopMic();
+    startMic();
+  }
+}
+
+async function loadAudioDevices() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputs = devices.filter(d => d.kind === 'audioinput');
+    
+    // Update Microphone Select
+    const select = $('micDeviceSelect');
+    if (select) {
+      const prevValue = select.value || window.savedMicDeviceId || '';
+      select.innerHTML = audioInputs.map(d => `<option value="${d.deviceId}">${d.label || 'Microphone ' + (audioInputs.indexOf(d) + 1)}</option>`).join('');
+      if (prevValue && Array.from(select.options).some(o => o.value === prevValue)) {
+        select.value = prevValue;
+      } else {
+        const defaultOption = Array.from(select.options).find(o => o.value === 'default');
+        if (defaultOption) select.value = 'default';
+      }
+      window.savedMicDeviceId = select.value;
+    }
+
+    // Update System Device Select
+    const sysSelect = $('sysDeviceSelect');
+    if (sysSelect) {
+      const prevSysValue = sysSelect.value || window.savedSysDeviceId || 'desktop';
+      sysSelect.innerHTML = `<option value="desktop">Auto-Detect System Audio</option>` + 
+        audioInputs.map(d => `<option value="${d.deviceId}">[Loopback] ${d.label || 'Input ' + (audioInputs.indexOf(d) + 1)}</option>`).join('');
+      if (prevSysValue && Array.from(sysSelect.options).some(o => o.value === prevSysValue)) {
+        sysSelect.value = prevSysValue;
+      }
+      window.savedSysDeviceId = sysSelect.value;
+    }
+  } catch(e) {
+    console.warn('Could not load audio devices', e);
+  }
+}
+
+// Auto-detect earphone plug/unplug and refresh device list
+navigator.mediaDevices.addEventListener('devicechange', async () => {
+  console.log('[Audio] Device change detected — refreshing device list');
+  await loadAudioDevices();
+  // If mic is actively listening, restart it with the new device
+  if (isListening) {
+    console.log('[Audio] Restarting mic with updated device...');
+    stopMic();
+    setTimeout(() => toggleMic(), 500);
+  }
+});
+
+function showMicError(msg) {
+  $('micDebug').style.display = 'block';
+  $('micDebugText').textContent = msg;
+  $('micOrb').className = 'mic-orb error';
+  $('micOrb').textContent = '🚫';
+  $('micStatus').textContent = 'Microphone error';
+  $('micSub').textContent = 'See details below';
+}
+
+function clearMicError() {
+  $('micDebug').style.display = 'none';
+}
+
+async function testMic() {
+  setStatus('Testing microphone access…');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: getAudioConstraints(), video: false });
+    await loadAudioDevices(); // Refresh list now that we definitely have permission
+    const activeLabel = getTrackLabel(stream);
+    setStatus(`✓ Mic works: "${activeLabel}"`);
+    $('micStatus').textContent = 'Microphone found';
+    setActiveMicLabel(activeLabel);
+    $('micOrb').className = 'mic-orb';
+    $('micOrb').textContent = '✅';
+    clearMicError();
+    stream.getTracks().forEach(t => t.stop());
+  } catch(err) {
+    showMicError(`Mic access failed: ${err.name} — ${err.message}`);
+    setStatus('Mic test failed: ' + err.message);
+  }
+}
+
+async function transcribeChunk(blob) {
+  if (testMode) return await mockTranscribeChunk();
+  const apiKey = $('apiKey').value.trim();
+  if (!apiKey || blob.size < 2000) return null;
+
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  const base64Audio = btoa(binary);
+
+  try {
+    let text = null;
+    if (currentProvider === 'grok') {
+      const res = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'grok-4.3',
+          max_tokens: 300,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'input_audio', input_audio: { data: base64Audio, format: 'webm' } },
+              { type: 'text', text: 'Transcribe exactly what was spoken. Return ONLY the spoken words, no commentary. If silent or unintelligible, return exactly: [silent]' }
+            ]
+          }]
+        })
+      });
+      const data = await res.json();
+      text = data.choices?.[0]?.message?.content?.trim() || null;
+    }
+    if (!text || text === '[silent]' || text.toLowerCase().includes('silent')) return null;
+    return text;
+  } catch(err) {
+    console.warn('Transcription error:', err);
+    return null;
+  }
+}
+
+async function startMic() {
+  let dgKey = $('deepgramApiKey')?.value?.trim() || '2434fd4b4d2d2960cc386b154687fccf5178a6e7';
+  
+  // Failsafe: If the user accidentally pasted a Groq key or invalid key into the Deepgram box, 
+  // Deepgram instantly drops the WebSocket connection with a 1006 error.
+  if (dgKey.startsWith('gsk_') || dgKey.length !== 40) {
+    console.warn('[Audio] Invalid Deepgram Key detected (looks like Groq or malformed). Forcing default Deepgram key.');
+    dgKey = '2434fd4b4d2d2960cc386b154687fccf5178a6e7';
+  }
+
+  console.log('[Audio] startMic called, Deepgram Key available:', !!dgKey);
+  if (dgKey) {
+    await startDeepgramMic(dgKey);
+  } else {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR) {
+      startNativeSpeech(SR);
+    } else {
+      await startWhisperMic();
+    }
+  }
+}
+
+async function toggleMic() {
+  console.log('[DEBUG] toggleMic called, isListening:', isListening);
+  isListening ? stopMic() : await startMic();
+}
+
+function isCandidateEcho(text) {
+  if (!text || !currentSessionQA || !currentSessionQA.length) return false;
+  const last = currentSessionQA[currentSessionQA.length - 1];
+  if (!last || !last.answer) return false;
+  
+  const extractWords = str => (str.toLowerCase().match(/[a-z0-9]{4,}/g) || []);
+  const spokenWords = extractWords(text);
+  if (spokenWords.length < 5) return false;
+  
+  const lastAnsWords = new Set(extractWords(last.answer));
+  let matchCount = 0;
+  spokenWords.forEach(w => { if (lastAnsWords.has(w)) matchCount++; });
+  const similarity = matchCount / spokenWords.length;
+  return similarity >= 0.65;
+}
+
+function isValidQuestion(text) {
+  if (!text) return false;
+  
+  // Normalize string: lowercase, letters and spaces only
+  const normalized = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!normalized || normalized.length < 7) return false;
+
+  const words = normalized.split(' ');
+  
+  // Common meeting greetings, pleasantries, filler phrases to ignore
+  const fillerPatterns = new Set([
+    'hello', 'hi', 'hey', 'hello hi', 'hi hello', 'hello hello', 'hi hi',
+    'good morning', 'good afternoon', 'good evening', 'good day',
+    'can you hear me', 'am i audible', 'am i clear', 'is my voice clear', 'you are on mute',
+    'yes tell me', 'yeah tell me', 'okay tell me', 'yes sure', 'yeah sure', 'okay sure',
+    'testing testing', 'one two three', 'just checking', 'one second', 'give me a minute',
+    'hold on', 'hold on please', 'wait a second', 'no problem', 'thank you so much',
+    'how are you', 'how are you doing', 'nice to meet you', 'can you see my screen',
+    'let me know', 'are you there', 'are you ready', 'let us start', 'lets start',
+    'yes', 'yeah', 'yep', 'no', 'nope', 'okay', 'ok', 'sure', 'fine', 'thanks', 'thank you'
+  ]);
+
+  if (fillerPatterns.has(normalized)) return false;
+
+  // Filter out utterances that are purely greeting/chatter words with no substance
+  const chatterWords = new Set([
+    'hello', 'hi', 'hey', 'yes', 'yeah', 'yep', 'no', 'nope', 'okay', 'ok', 'sure', 
+    'fine', 'thanks', 'thank', 'you', 'please', 'test', 'testing', 'good', 'morning', 
+    'afternoon', 'evening', 'am', 'i', 'audible', 'hear', 'me', 'clear', 'there', 
+    'one', 'two', 'three', 'second', 'minute', 'wait', 'hold', 'on'
+  ]);
+  
+  const substantiveWords = words.filter(w => !chatterWords.has(w));
+  if (substantiveWords.length < 2) {
+    // If fewer than 2 real topic words, it's small talk / greeting
+    return false;
+  }
+
+  return true;
+}
+
+function cleanQuestionForAI(text) {
+  if (!text) return '';
+  return text.trim();
+}
+
+function triggerAnswer() {
+  if (isGenerating) {
+    console.log('[Audio] Still generating previous answer, ignoring trigger');
+    return;
+  }
+  const rawQ = finalTranscript.trim();
+  if (!rawQ) return;
+  
+  if (isCandidateEcho(rawQ)) {
+    console.log('[Audio] Echo detected (Candidate reading previous answer). Discarding.');
+    finalTranscript = '';
+    $('transcript').innerHTML = '<span class="t-placeholder">Listening… (Candidate reading suppressed)</span>';
+    return;
+  }
+  
+  if (!isValidQuestion(rawQ)) {
+    console.log('[Audio] Speech is greeting / chatter / noise. Discarding without triggering AI:', rawQ);
+    finalTranscript = '';
+    return;
+  }
+  
+  const cleanedQ = cleanQuestionForAI(rawQ);
+  console.log('[Audio] Valid Question Finalized -> Triggering AI Answer:', cleanedQ);
+  finalTranscript = ''; // Reset immediately so subsequent speech starts fresh
+  askQuestion(cleanedQ);
+}
+function startNativeSpeech(SR) {
+  try {
+    recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; ++i) {
+        if (e.results[i].isFinal) {
+          finalTranscript += ' ' + e.results[i][0].transcript;
+        } else {
+          interim += e.results[i][0].transcript;
+        }
+      }
+      const fullText = (finalTranscript + ' ' + interim).trim();
+      $('transcript').innerHTML = `<span class="t-final">${esc(fullText)}</span>`;
+      ipcRenderer.send('interviewer-interim', fullText);
+
+      clearTimeout(silenceTimer);
+      if (!isLongQuestionMode && fullText.length >= 6) {
+        silenceTimer = setTimeout(() => {
+                if (fullText.replace(/[^a-zA-Z0-9]/g, '').trim().length >= 6 && !isGenerating && isListening) {
+                  console.log('[650ms Fast Silence Gap] Interviewer question ready:', fullText);
+                  finalTranscript = fullText;
+                  triggerAnswer();
+                }
+              }, 650);
+      }
+    };
+
+    recognition.onerror = (e) => {
+      console.warn('[Web Speech Error]:', e.error);
+    };
+
+    recognition.onend = () => {
+      if (isListening) {
+        try { recognition.start(); } catch {}
+      }
+    };
+
+    recognition.start();
+  } catch (err) {
+    console.error('[Web Speech Init Error]:', err);
+    showMicError('Failed to start Web Speech: ' + err.message);
+  }
+}
+
+async function startDeepgramMic(apiKey) {
+  const isPracticeMode = document.getElementById('practiceModeToggle')?.checked || false;
+  
+  if (!apiKey) { showMicError('Enter your Deepgram API key first.'); return; }
+
+  // 1. RAW SYSTEM AUDIO (ZOOM/TEAMS)
+  let sysStream = null;
+  let audioOnlyStream = null;
+  const sysDeviceId = sysDeviceSelect?.value || 'desktop';
+
+  try {
+    if (sysDeviceId === 'desktop') {
+      const desktopSourceId = await ipcRenderer.invoke('get-desktop-audio-source');
+      if (desktopSourceId) {
+        logDebug('✅ Requesting System Audio from desktopSourceId: ' + desktopSourceId);
+        sysStream = await navigator.mediaDevices.getUserMedia({
+          audio: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: desktopSourceId } },
+          video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: desktopSourceId } }
+        });
+      }
+    } else {
+      logDebug('✅ Requesting System Audio from Loopback Device: ' + sysDeviceId);
+      const base = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+      sysStream = await navigator.mediaDevices.getUserMedia({
+        audio: { ...base, deviceId: { exact: sysDeviceId } },
+        video: false
+      });
+    }
+
+    if (sysStream && sysStream.getAudioTracks().length > 0) {
+        systemStream = sysStream;
+        // create a separate audio‑only stream for MediaRecorder (avoids video‑track issues)
+        audioOnlyStream = new MediaStream(sysStream.getAudioTracks());
+        
+        try {
+          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const source = audioCtx.createMediaStreamSource(audioOnlyStream);
+          sysAnalyser = audioCtx.createAnalyser();
+          sysAnalyser.fftSize = 2048;
+          source.connect(sysAnalyser);
+          sysAudioData = new Uint8Array(sysAnalyser.fftSize);
+
+          if (window.loudnessInterval) clearInterval(window.loudnessInterval);
+          window.lastInterviewerLoudTime = null;   // null = "no speech detected yet"
+          window.interviewerSpeaking = false;
+          window.loudnessInterval = setInterval(() => {
+            if (!isListening || !sysAnalyser) return;
+            sysAnalyser.getByteTimeDomainData(sysAudioData);
+            let sumSquares = 0;
+            for (let i = 0; i < sysAudioData.length; i++) {
+              const normalized = (sysAudioData[i] - 128) / 128;
+              sumSquares += normalized * normalized;
+            }
+            const rms = Math.sqrt(sumSquares / sysAudioData.length);
+            let isLoudNow = false;
+            if (rms > 0.001) {
+              const currentLoudnessDb = 20 * Math.log10(rms);
+              if (currentLoudnessDb > silenceThresholdDb) {
+                isLoudNow = true;
+              }
+            }
+
+            if (isLoudNow) {
+              // Interviewer is actively speaking — keep pushing the loud time forward
+              window.interviewerSpeaking = true;
+              window.lastInterviewerLoudTime = Date.now();
+              window.answerFiredThisSession = false; // reset guard once they speak again
+            }
+
+            // Only fire AFTER speech was confirmed AND 1200ms of true silence has passed
+            // Guard: never fire twice for the same speech session
+            if (!isLongQuestionMode && !isGenerating && isListening && 
+                window.interviewerSpeaking && window.lastInterviewerLoudTime &&
+                !window.answerFiredThisSession) {
+              const timeSinceLoud = Date.now() - window.lastInterviewerLoudTime;
+              if (timeSinceLoud >= 1200) {  // 1200ms = confirmed end of sentence
+                const textToCheck = window.currentInterviewerText || '';
+                if (textToCheck.replace(/[^a-zA-Z0-9]/g, '').trim().length >= 6) {
+                  window.interviewerSpeaking = false;
+                  window.lastInterviewerLoudTime = null;
+                  window.answerFiredThisSession = true; // lock: prevent second fire
+                  finalTranscript = textToCheck;
+                  window.currentInterviewerText = '';
+                  triggerAnswer();
+                } else {
+                  // Silence gap passed but no transcript yet — reset and wait
+                  window.interviewerSpeaking = false;
+                  window.lastInterviewerLoudTime = null;
+                }
+              }
+            }
+          }, 80);
+        } catch(e) { console.warn('AudioContext failed', e); }
+
+        // Do NOT disable the video track, as it kills the audio on Windows WebRTC!
+        logDebug('✅ System Meeting Audio (Zoom/Teams) successfully attached!');
+      } else {
+        sysStream = null;
+        audioOnlyStream = null;
+      }
+  } catch (e) {
+    logDebug('❌ System audio loopback failed: ' + e.message);
+    audioOnlyStream = null;
+  }
+
+  // 2. RAW CANDIDATE MIC
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioConstraints(), video: false });
+    logDebug('✅ Microphone captured');
+    await loadAudioDevices(); // Refresh list now that we definitely have permission
+    setActiveMicLabel(getTrackLabel(micStream));
+  } catch(err) {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      await loadAudioDevices(); // Refresh list now that we definitely have permission
+      setActiveMicLabel(getTrackLabel(micStream));
+    } catch(fallbackErr) {
+      showMicError(`Mic access denied: ${fallbackErr.message}`);
+      return;
+    }
+  }
+
+  isListening = true;
+  if ($('startInterviewBtn')) {
+    $('startInterviewBtn').classList.add('active');
+    $('startInterviewBtn').innerHTML = '⚡ Interview Running...';
+  }
+  $('micOrb').className = 'mic-orb active';
+  $('micStatus').textContent = isPracticeMode ? 'Practice Mode (Mic asks questions)' : (sysStream ? 'Live Mode (Mic & Zoom Active)' : 'Live Mode (Mic Active)');
+  $('waveform').style.display = 'flex';
+  clearMicError();
+  if (!isPracticeMode && !sysStream) {
+    $('micDebug').style.display = 'block';
+    $('micDebugText').textContent = 'Meeting/system audio was not captured. Candidate mic transcription will work, but interviewer recognition needs desktop audio from Zoom/Meet/Teams.';
+  }
+  if (!sessionStart) { sessionStart = new Date().toISOString(); currentSessionQA = []; }
+  ipcRenderer.send('mic-state-changed', true);
+
+  const techTerms = ['Salesforce', 'Apex', 'LWC', 'SOQL', 'Batch Apex', 'Governor Limits'];
+  const selectedTerms = Array.from(selectedTechs || []).filter(Boolean);
+  const keytermParam = Array.from(new Set([...techTerms, ...selectedTerms])).map(t => 'keyterm=' + encodeURIComponent(t)).join('&');
+  const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-3&language=en&smart_format=true&punctuate=true&interim_results=true&endpointing=350&utterance_end_ms=1000&${keytermParam}`;
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+
+  // KEEP-ALIVE TIMER
+  if (dgHeartbeatTimer) clearInterval(dgHeartbeatTimer);
+  dgHeartbeatTimer = setInterval(() => {
+    if (!isListening) { clearInterval(dgHeartbeatTimer); dgHeartbeatTimer = null; return; }
+    try { if (dgSocket && dgSocket.readyState === WebSocket.OPEN) dgSocket.send(JSON.stringify({ type: 'KeepAlive' })); } catch {}
+    try { if (dgSysSocket && dgSysSocket.readyState === WebSocket.OPEN) dgSysSocket.send(JSON.stringify({ type: 'KeepAlive' })); } catch {}
+  }, 4000);
+
+  // SOCKET 1: CANDIDATE MIC (Raw Stream)
+  function connectMicSocket() {
+    if (!isListening || !micStream) return;
+    try {
+      dgSocket = new WebSocket(wsUrl, ['token', apiKey]);
+      dgSocket.onopen = () => {
+        logDebug('✅ Deepgram WebSocket (Mic) OPENED!');
+        try {
+          if (mediaRecorder) { try { mediaRecorder.stop(); } catch{} }
+          mediaRecorder = new MediaRecorder(micStream, { mimeType });
+          mediaRecorder.ondataavailable = e => { 
+            if (e.data.size > 0 && dgSocket?.readyState === WebSocket.OPEN) dgSocket.send(e.data); 
+          };
+          mediaRecorder.start(250);
+        } catch(mrErr) {
+          logDebug('❌ Mic recorder failed: ' + mrErr.message);
+          showMicError('Mic recorder failed: ' + mrErr.message);
+        }
+      };
+
+      dgSocket.onmessage = (msg) => {
+        try {
+          const data = JSON.parse(msg.data);
+          if (data.type === 'Metadata') return;
+
+          const transcript = data?.channel?.alternatives?.[0]?.transcript?.trim();
+          if (transcript) {
+            $('waveform').style.opacity = '0.5';
+            setTimeout(() => $('waveform').style.opacity = '1', 100);
+
+            // ── CROSS-TALK SUPPRESSION ──────────────────────────────────
+            const interviewerText = (window.currentInterviewerText || '').toLowerCase();
+            const micText = transcript.toLowerCase();
+            let isCrossTalk = false;
+            if (interviewerText.length > 5 && micText.length > 5) {
+              const micWords = micText.match(/[a-z]{3,}/g) || [];
+              const interviewerWords = new Set(interviewerText.match(/[a-z]{3,}/g) || []);
+              const matchCount = micWords.filter(w => interviewerWords.has(w)).length;
+              const matchRatio = micWords.length > 0 ? matchCount / micWords.length : 0;
+              if (matchRatio >= 0.55) {
+                isCrossTalk = true;
+                console.log('[Mic] Cross-talk suppressed (speaker bleed):', transcript);
+              }
+            }
+
+            if (!isCrossTalk) {
+              if (isPracticeMode) {
+                // In Practice Mode, treat Mic as Interviewer
+                let fullText = '';
+                if (data.is_final) { 
+                  finalTranscript += (finalTranscript ? ' ' : '') + transcript; 
+                  finalTranscript = finalTranscript.trim(); 
+                  fullText = finalTranscript; 
+                } else { 
+                  fullText = (finalTranscript ? finalTranscript + ' ' : '') + transcript; 
+                }
+                $('transcript').innerHTML = `<span class="t-final">${esc(fullText)}</span>`;
+                window.currentInterviewerText = fullText;
+                ipcRenderer.send('interviewer-interim', fullText);
+
+                // Simple silence timer for Practice Mode
+                if (window.practiceSilenceTimer) clearTimeout(window.practiceSilenceTimer);
+                if (!isLongQuestionMode && !isGenerating && data.is_final && finalTranscript.length > 5) {
+                  window.practiceSilenceTimer = setTimeout(() => {
+                    if (isListening && !isGenerating && finalTranscript.length > 5) {
+                      triggerAnswer();
+                    }
+                  }, 1200);
+                }
+              } else {
+                // Normal Mode: Candidate handling
+                const liveCandidateText = (candidateFinalTranscript ? candidateFinalTranscript + ' ' : '') + transcript;
+                candidateTranscript = liveCandidateText.trim();
+                showCandidateTranscript(candidateTranscript);
+                ipcRenderer.send('candidate-interim', candidateTranscript);
+                if (data.is_final) {
+                  candidateFinalTranscript = (candidateFinalTranscript ? candidateFinalTranscript + ' ' : '') + transcript;
+                  candidateFinalTranscript = candidateFinalTranscript.trim();
+                  candidateTranscript = candidateFinalTranscript;
+                  showCandidateTranscript(candidateTranscript);
+                  ipcRenderer.send('candidate-interim', candidateTranscript);
+                  if (data.speech_final || data.type === 'UtteranceEnd') {
+                    ipcRenderer.send('candidate-spoke', candidateTranscript);
+                    currentSessionQA.push({ role: 'candidate', text: candidateTranscript, time: new Date().toISOString() });
+                    candidateFinalTranscript = '';
+                    candidateTranscript = '';
+                  }
+                }
+              }
+            }
+          } else if (data.type === 'UtteranceEnd' && candidateFinalTranscript) {
+            candidateTranscript = candidateFinalTranscript.trim();
+            showCandidateTranscript(candidateTranscript);
+            ipcRenderer.send('candidate-spoke', candidateTranscript);
+            currentSessionQA.push({ role: 'candidate', text: candidateTranscript, time: new Date().toISOString() });
+            candidateFinalTranscript = '';
+            candidateTranscript = '';
+          }
+        } catch(e) {
+          logDebug('❌ Deepgram mic parse error: ' + e.message);
+        }
+      };      
+      dgSocket.onerror = (err) => {
+        logDebug('❌ Deepgram mic socket error');
+        showMicError('Deepgram mic socket error. Check the Deepgram API key and internet connection.');
+      };
+      dgSocket.onclose = (e) => {
+        logDebug(`⚠ Deepgram mic socket closed (${e.code || 'no-code'}). Reconnecting if mic is still on...`);
+        if (isListening) setTimeout(connectMicSocket, 1500);
+      };
+    } catch(err) {
+      logDebug('❌ Deepgram mic socket failed: ' + err.message);
+      showMicError('Deepgram mic socket failed: ' + err.message);
+    }
+  }
+
+  // SOCKET 2: SYSTEM AUDIO (Raw Stream)
+  function connectSysSocket() {
+    if (!isListening || !systemStream) return;
+    try {
+      dgSysSocket = new WebSocket(wsUrl, ['token', apiKey]);
+      dgSysSocket.onopen = () => {
+        logDebug('✅ Deepgram WebSocket (System) OPENED!');
+        try {
+          if (sysMediaRecorder) { try { sysMediaRecorder.stop(); } catch{} }
+          sysMediaRecorder = new MediaRecorder(audioOnlyStream, { mimeType });
+          sysMediaRecorder.ondataavailable = e => { 
+            if (e.data.size > 0 && dgSysSocket?.readyState === WebSocket.OPEN) dgSysSocket.send(e.data); 
+          };
+          sysMediaRecorder.start(250);
+        } catch (sysErr) {}
+      };
+
+      dgSysSocket.onmessage = (msg) => {
+        try {
+          const data = JSON.parse(msg.data);
+          if (data.type === 'Metadata') return;
+          const transcript = data?.channel?.alternatives?.[0]?.transcript?.trim();
+          if (transcript) {
+            $('waveform').style.opacity = '0.5';
+            setTimeout(() => $('waveform').style.opacity = '1', 100);
+
+            let fullText = '';
+            if (data.is_final) { finalTranscript += (finalTranscript ? ' ' : '') + transcript; finalTranscript = finalTranscript.trim(); fullText = finalTranscript; } 
+            else { fullText = (finalTranscript ? finalTranscript + ' ' : '') + transcript; }
+            $('transcript').innerHTML = `<span class="t-final">${esc(fullText)}</span>`;
+            ipcRenderer.send('interviewer-interim', fullText);
+            
+            window.currentInterviewerText = fullText; // always store latest text for the timer
+
+            // Fallback: If volume-based sysAnalyser misses it, rely on Deepgram's text pace
+            if (window.sysSilenceTimer) clearTimeout(window.sysSilenceTimer);
+            if (!isLongQuestionMode && !isGenerating && data.is_final && finalTranscript.length > 5) {
+              window.sysSilenceTimer = setTimeout(() => {
+                if (isListening && !isGenerating && finalTranscript.length > 5) {
+                  console.log('[Fallback] Triggering answer via text silence timer');
+                  triggerAnswer();
+                }
+              }, PAUSE_MS + 300); // slightly longer than the volume based one
+            }
+          } else if (data.type === 'UtteranceEnd' && window.currentInterviewerText) {
+            finalTranscript = window.currentInterviewerText;
+          }
+        } catch(e) {}
+      };
+      dgSysSocket.onclose = () => { if (isListening && systemStream) setTimeout(connectSysSocket, 1500); };
+    } catch(err) {}
+  }
+
+  function logDebug(msg) {
+    console.log(msg);
+    const dbg = document.getElementById('massiveDebug');
+    if (dbg) {
+      dbg.innerText = msg + '\n' + dbg.innerText;
+      if (dbg.innerText.length > 2000) dbg.innerText = dbg.innerText.substring(0, 2000);
+    }
+  }
+
+  connectMicSocket();
+  connectSysSocket();
+}
+
+async function startWhisperMic() {
+  const CHUNK_MS = 2500;
+  let audioChunks = [];
+
+  if (testMode) {
+    $('micOrb').className = 'mic-orb active';
+    $('micOrb').textContent = '🧪';
+    $('micStatus').textContent = 'Test Mode Microphone';
+    $('micSub').textContent = 'Mock transcripts every 5s';
+    $('waveform').style.display = 'flex';
+    clearMicError();
+    if (!sessionStart) { sessionStart = new Date().toISOString(); currentSessionQA = []; }
+    setStatus('🧪 Test mic active — delivering mock transcripts');
+
+    async function mockChunkLoop() {
+      if (!isListening) return;
+      setStatus('🧪 Transcribing mock chunk…');
+      const text = await mockTranscribeChunk();
+      if (text && isListening) {
+        finalTranscript = text;
+        $('transcript').innerHTML = `<span class="t-final">${esc(finalTranscript)}</span>`;
+        $('manualQ').value = finalTranscript;
+        setStatus('🧪 Mock transcript ready — auto-asking…');
+        askQuestion(finalTranscript);
+      }
+      if (isListening) setTimeout(mockChunkLoop, 5000);
+    }
+    mockChunkLoop();
+    return;
+  }
+
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioConstraints(), video: false });
+  } catch(err) {
+    showMicError(`Mic access denied: ${err.message}`);
+    return;
+  }
+
+  isListening = true;
+  if ($('startInterviewBtn')) {
+    $('startInterviewBtn').classList.add('active');
+    $('startInterviewBtn').innerHTML = '⚡ Interview Running...';
+  }
+  $('micOrb').className = 'mic-orb active';
+  $('micOrb').textContent = '🎤';
+  $('micStatus').textContent = `Listening (${currentProvider} mode)…`;
+  $('micSub').textContent = `Recording in 2.5s chunks — transcribing via ${currentProvider}`;
+  $('waveform').style.display = 'flex';
+  clearMicError();
+  if (!sessionStart) { sessionStart = new Date().toISOString(); currentSessionQA = []; }
+  setStatus(`Microphone active (${currentProvider} transcription)`);
+
+  function recordChunk() {
+    if (!isListening) return;
+    audioChunks = [];
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+    mediaRecorder = new MediaRecorder(micStream, { mimeType });
+
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(audioChunks, { type: mimeType });
+      $('micSub').textContent = `Transcribing… (${Math.round(blob.size/1024)}KB)`;
+      setStatus('Transcribing audio chunk…');
+      const text = await transcribeChunk(blob);
+      if (text && text.trim().length > 5) {
+        finalTranscript += ' ' + text.trim();
+        finalTranscript = finalTranscript.trim();
+        $('transcript').innerHTML = `<span class="t-final">${esc(finalTranscript)}</span>`;
+        $('manualQ').value = finalTranscript;
+        setStatus('Transcript updated — auto-asking in 1.5s…');
+        clearTimeout(silenceTimer);
+        if (!isLongQuestionMode) {
+          silenceTimer = setTimeout(() => {
+            if (finalTranscript.length > 5) {
+              askQuestion(finalTranscript);
+              finalTranscript = '';
+            }
+          }, 1500);
+        }
+      } else {
+        setStatus('No speech detected in chunk — listening…');
+      }
+      $('micSub').textContent = `Recording in 2.5s chunks — transcribing via ${currentProvider}`;
+      if (isListening) recordChunk();
+    };
+
+    mediaRecorder.start();
+    setTimeout(() => { if (mediaRecorder.state === 'recording') mediaRecorder.stop(); }, CHUNK_MS);
+  }
+
+  recordChunk();
+}
+
+function stopMic() {
+  isListening = false;
+  try { recognition && recognition.stop(); } catch {}
+  try { mediaRecorder && mediaRecorder.state === 'recording' && mediaRecorder.stop(); } catch {}
+  try { systemMediaRecorder && systemMediaRecorder.state === 'recording' && systemMediaRecorder.stop(); } catch {}
+  try { sysMediaRecorder && sysMediaRecorder.state === 'recording' && sysMediaRecorder.stop(); } catch {}
+  try { micStream && micStream.getTracks().forEach(t => t.stop()); } catch {}
+  try { systemStream && systemStream.getTracks().forEach(t => t.stop()); } catch {}
+  try { dgSocket && dgSocket.readyState === WebSocket.OPEN && dgSocket.close(1000, 'stopped'); } catch {}
+  try { dgSysSocket && dgSysSocket.readyState === WebSocket.OPEN && dgSysSocket.close(1000, 'stopped'); } catch {}
+  try { dgSystemSocket && dgSystemSocket.readyState === WebSocket.OPEN && dgSystemSocket.close(1000, 'stopped'); } catch {}
+  micStream = null;
+  systemStream = null;
+  mediaRecorder = null;
+  systemMediaRecorder = null;
+  dgSocket = null;
+  dgSysSocket = null;
+  dgSystemSocket = null;
+  recognition = null;
+  candidateFinalTranscript = '';
+  candidateTranscript = '';
+  clearTimeout(silenceTimer);
+  if (window.loudnessInterval) {
+    clearInterval(window.loudnessInterval);
+    window.loudnessInterval = null;
+  }
+  window.interviewerSpeaking = false;
+  window.lastInterviewerLoudTime = null;
+  window.currentInterviewerText = '';
+  try { if (sysAnalyser && sysAnalyser.context) sysAnalyser.context.close(); } catch {}
+  sysAnalyser = null;
+  sysAudioData = null;
+  if ($('startInterviewBtn')) {
+    $('startInterviewBtn').classList.remove('active');
+    $('startInterviewBtn').innerHTML = '⚡ Start Interview';
+  }
+  $('waveform').style.display = 'none';
+  $('micOrb').className = 'mic-orb';
+  $('micOrb').textContent = '🎤';
+  $('micStatus').textContent = 'Ready to listen';
+  $('micSub').textContent = 'Click Start to enable microphone';
+  setStatus('Mic stopped');
+}
+
+// ── AI ANSWER ─────────────────────────────────────────────
+function buildSystemPrompt(question = '') {
+  let sys = `You are an expert Salesforce interview coach and Senior Salesforce Technical Architect (8+ years enterprise experience). You produce comprehensive, structured, interview-winning answers that help candidates understand AND speak confidently.
+
+TARGET ROLE: ${currentRole}
+
+═══════════════════════════════════════
+YOUR ANSWER STYLE — FOLLOW EXACTLY
+═══════════════════════════════════════
+Model your answers after the best Salesforce study guides and interview prep resources. Every answer must be:
+✅ Structured with clear headings
+✅ Easy to understand AND easy to memorize
+✅ Include a relatable real-world analogy when helpful
+✅ Include tables for comparisons, limits, or feature breakdowns
+✅ Include code examples — ALWAYS show BAD code vs GOOD code when relevant
+✅ End with a crisp "Interview-Ready Answer" — exactly what to say out loud
+
+═══════════════════════════════════════
+OUTPUT FORMAT — STRICT
+═══════════════════════════════════════
+
+### ⭐ What to Speak (Interview-Ready Answer)
+> Write 3-5 clear, confident sentences that the candidate can say VERBATIM in an interview. This should sound natural when spoken. Use first person. No filler phrases. Include the most important technical point and one real-world example or use case. This is what you SAY, not what you document.
+
+---
+
+### 📖 Full Explanation
+
+**One-line definition:** [Plain English definition in 1 sentence]
+
+**Real-world analogy:** [A simple relatable analogy that makes the concept click]
+
+**Why it exists / Why it matters:** [2-3 sentences on the purpose and importance]
+
+**[Section relevant to question — use appropriate heading]:**
+[Add the most relevant breakdown section based on the question type:]
+
+For conceptual/theory questions:
+- Key types or variants (with short description of each)
+- When to use which
+
+For comparison questions ("X vs Y"):
+| Feature | X | Y |
+|---------|---|---|
+| [row] | [val] | [val] |
+
+For limit/reference questions:
+| Limit | Synchronous | Asynchronous |
+|-------|-------------|--------------|
+| [row] | [val] | [val] |
+
+**❌ Common Mistake (What NOT to do):**
+\`\`\`apex
+// BAD — explain why this is wrong
+[bad code example if applicable]
+\`\`\`
+
+**✅ Best Practice (What TO do):**
+\`\`\`apex
+// GOOD — explain why this is correct
+[good/correct code example if applicable]
+\`\`\`
+
+**Best Practices / Rules of Thumb:**
+- [actionable best practice 1]
+- [actionable best practice 2]
+- [actionable best practice 3]
+
+---
+
+### 🔥 Follow-Up Questions to Prepare For
+
+**Q: [Most likely follow-up]**
+→ [2-3 sentence natural answer]
+
+**Q: [Harder follow-up]**
+→ [2-3 sentence answer that shows production experience]
+
+═══════════════════════════════════════
+IMPORTANT RULES
+═══════════════════════════════════════
+- If question is a CODING TASK: provide the full trigger/class with comments. Always show the bulkified version. Explain what a non-bulkified version would look like and why it fails.
+- If question is a COMPARISON (X vs Y): always include a comparison table.
+- If question is about LIMITS: always include a reference table with the actual limit numbers.
+- If question is BEHAVIORAL: use STAR format in the spoken answer, add a "Key Lesson Learned" section.
+- For "Tell me about yourself": spoken answer covers 3 things — what you've built, at what scale, what you're known for.
+- NEVER give a vague answer. Every answer must have at least ONE concrete, specific example.
+- Code must be production-quality: bulkified, with error handling, following Salesforce best practices.
+`;
+
+  if (selectedTechs.size > 0) {
+    sys += `\n\nTECHNOLOGIES IN CANDIDATE'S STACK (reference these in examples when relevant): ${Array.from(selectedTechs).join(', ')}`;
+  }
+  if (jdTextData) {
+    sys += `\n\nJOB DESCRIPTION (tailor examples and focus areas to match this role): ${jdTextData}`;
+  }
+  const resumeContext = buildResumeContext(question);
+  if (resumeContext) {
+    sys += `\n\nCANDIDATE'S REAL RESUME — when candidate says "In my experience" or gives examples, use ACTUAL projects, companies, and metrics from this resume. Never invent details: ${resumeContext}`;
+  }
+  const referenceContext = buildReferenceContext(question);
+  if (referenceContext) {
+    sys += `\n\nTECHNICAL REFERENCE MATERIAL (use this for accurate technical details): ${referenceContext}`;
+  }
+
+  return sys;
+}
+
+function buildGroqSystemPrompt(question = '') {
+  const roleName = currentRole || 'Salesforce Developer';
+
+  let p = `You are an expert Salesforce interview coach and Senior Salesforce Technical Architect (8+ years enterprise experience). You produce comprehensive, structured, interview-winning answers that help candidates understand AND speak confidently.
+
+TARGET ROLE: ${roleName}
+
+YOUR ANSWER STYLE — FOLLOW EXACTLY:
+Model your answers after the best Salesforce study guides and interview prep resources. Every answer must be:
+✅ Structured with clear headings
+✅ Include a relatable real-world analogy when helpful
+✅ Include tables for comparisons, limits, or feature breakdowns
+✅ Show BAD code vs GOOD code when relevant to the question
+✅ End with a crisp interview-ready spoken answer
+
+OUTPUT FORMAT — STRICT:
+
+### ⭐ What to Speak (Interview-Ready Answer)
+> Write 3-5 clear, confident sentences the candidate can say VERBATIM. Natural spoken voice. Use first person. Include the most important technical point and one real-world example. This is what you SAY, not what you document.
+
+---
+
+### 📖 Full Explanation
+
+**One-line definition:** [Plain English, 1 sentence]
+
+**Real-world analogy:** [Simple relatable analogy that makes it click]
+
+**Why it exists / Why it matters:** [2-3 sentences]
+
+**[Relevant breakdown section with appropriate heading]:**
+- For conceptual questions: types/variants + when to use each
+- For comparisons: markdown table (Feature | X | Y)
+- For limits: markdown table (Limit | Synchronous | Asynchronous) with actual numbers
+
+**❌ Common Mistake (What NOT to do):**
+\`\`\`apex
+// BAD — [reason]
+[bad code if applicable]
+\`\`\`
+
+**✅ Best Practice (What TO do):**
+\`\`\`apex
+// GOOD — [reason]
+[correct code if applicable]
+\`\`\`
+
+**Best Practices:**
+- [point 1]
+- [point 2]
+- [point 3]
+
+---
+
+### 🔥 Follow-Up Questions
+
+**Q: [Most likely follow-up]**
+→ [2-3 sentence answer]
+
+**Q: [Harder follow-up]**
+→ [2-3 sentence answer showing production experience]
+
+IMPORTANT RULES:
+- CODING TASK: full bulkified code with comments + explain what non-bulkified version would fail
+- COMPARISON: always include a comparison table
+- LIMITS question: always include reference table with actual numbers
+- BEHAVIORAL: STAR format in spoken answer
+- NEVER give vague answers — always at least ONE concrete specific example
+- Code must be production-quality: bulkified, error-handled, Salesforce best practices
+`;
+
+  if (selectedTechs.size > 0) {
+    p += `\n\nCANDIDATE'S TECH STACK (reference in examples when relevant): ${Array.from(selectedTechs).join(', ')}`;
+  }
+  if (jdTextData) {
+    p += `\n\nJOB DESCRIPTION (tailor examples and focus to this role): ${jdTextData}`;
+  }
+  const resumeContext = buildResumeContext(question);
+  if (resumeContext) {
+    p += `\n\nCANDIDATE'S REAL RESUME — use actual projects, metrics, companies. Never invent: ${resumeContext}`;
+  }
+
+  return p;
+}
+
+
+function buildChatGPTSystemPrompt(question = '', useOverride = true) {
+  const roleName = currentRole || 'Software Engineer';
+  const techList = Array.from(selectedTechs);
+  const techs = techList.join(', ') || 'general technologies';
+  const hasSalesforceStack = techList.some(t => /salesforce|apex|lwc|lightning|soql|sosl|flow|experience cloud|service cloud|sales cloud|marketing cloud|mulesoft/i.test(t));
+
+  let p = '';
+  if (useOverride && chatgptPromptOverride) {
+    p = chatgptPromptOverride;
+  } else {
+    p = `Attend this interview as a confident, senior ${roleName} candidate.
+
+Selected technologies and tools from my setup:
+${techs}
+
+Your job is to answer every interviewer question correctly, precisely, and in a way that impresses the interviewer.
+
+When you receive a question:
+1. Start with a direct, interview-ready answer I can speak immediately.
+2. Keep the answer concise, accurate, and practical.
+3. Show strong hands-on expertise in the selected technologies and tools.
+4. Use first person where it sounds natural, as if I am answering in the interview.
+5. Include a concrete project-style example when it helps.
+6. If code is requested, provide clean, production-ready code and explain the key idea briefly.
+7. Avoid generic filler, long disclaimers, and vague theory.
+
+Preferred answer format:
+- What to say: 3-6 polished sentences.
+- Key points: short bullets only when useful.
+- Example: one realistic example when relevant.
+- Follow-up ready line: a final sentence that prepares me for the next interviewer question.
+
+Tone:
+Professional, confident, precise, and calm. The answer should sound like an experienced candidate, not like a textbook.
+`;
+
+    if (hasSalesforceStack) {
+      p += `
+Salesforce-specific interview mode:
+Because Salesforce or Salesforce-related tools are selected, answer as a senior Salesforce developer or architect with strong real project experience.
+
+For Salesforce theoretical questions:
+1. Start with a simple, accurate definition.
+2. Explain why the concept exists in Salesforce.
+3. Mention where it is used in real projects.
+4. Include governor limits, security, scalability, and best practices when relevant.
+5. Mention common mistakes or anti-patterns when useful.
+6. Keep the spoken answer short, clear, and interview-ready.
+
+For Salesforce scenario-based questions:
+1. Restate or clarify the requirement in one sentence.
+2. Recommend the best Salesforce approach.
+3. Explain why this approach is better than alternatives.
+4. Mention the right Salesforce tools: Apex, LWC, Flow, SOQL, SOSL, Batch Apex, Queueable Apex, Scheduled Apex, Platform Events, Integration Patterns, Sharing, CRUD/FLS, or Data Model design as relevant.
+5. Always consider governor limits, bulkification, security, scalability, maintainability, and error handling.
+6. Include a practical implementation path, not only theory.
+7. End with a polished line I can say directly to the interviewer.
+
+Salesforce answer quality rules:
+- For Apex questions, mention bulkification, SOQL/DML outside loops, governor limits, transaction handling, and testability where relevant.
+- For LWC questions, mention component communication, wire/adapters, imperative Apex calls, lifecycle hooks, reactivity, and UI performance where relevant.
+- For Flow vs Apex questions, explain when declarative automation is enough and when custom code is better.
+- For integration questions, cover authentication, callouts, async processing, retries, logging, error handling, and limits.
+- For security questions, cover sharing rules, role hierarchy, profiles/permission sets, CRUD/FLS checks, and with sharing/without sharing where relevant.
+- For data-volume questions, prefer scalable approaches like Batch Apex, selective SOQL, indexed fields, async processing, and proper logging.
+`;
+    }
+  }
+
+  if (jdTextData && (!useOverride || !chatgptPromptOverride.includes(jdTextData))) {
+    p += `\nJob description context to tailor answers:\n${jdTextData}\n`;
+  }
+  const resumeContext = buildResumeContext(question);
+  if (resumeContext && (!useOverride || !chatgptPromptOverride.includes(resumeContext))) {
+    p += `\nMy resume and experience context. Use these details when answering background, project, or experience questions:\n${resumeContext}\n`;
+  }
+  const referenceContext = buildReferenceContext(question);
+  if (referenceContext && (!useOverride || !chatgptPromptOverride.includes(referenceContext))) {
+    p += `\nTECHNICAL REFERENCE MATERIAL (use this for accurate technical details):\n${referenceContext}\n`;
+  }
+
+  return p;
+}
+
+function showChatGPTPromptPreview(force = false) {
+  if (currentProvider !== 'chatgpt') return;
+  const modal = $('chatgptPromptPreview');
+  const textArea = $('chatgptPromptText');
+  const meta = $('chatgptPromptMeta');
+  if (!modal || !textArea) return;
+
+  const prompt = buildChatGPTSystemPrompt('', false);
+  textArea.value = prompt;
+  if (meta) meta.textContent = `${Array.from(selectedTechs).length || 0} tools selected`;
+  modal.style.display = 'flex';
+  setStatus('Editing ChatGPT base instructions.');
+}
+
+function approveChatGPTPromptPreview() {
+  chatgptPromptOverride = $('chatgptPromptText')?.value?.trim() || buildChatGPTSystemPrompt('', false);
+  chatgptPromptApproved = true;
+  $('chatgptPromptPreview').style.display = 'none';
+  setStatus('ChatGPT prompt updated.');
+}
+
+function cancelChatGPTPromptPreview() {
+  $('chatgptPromptPreview').style.display = 'none';
+}
+
+async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
+  let question = qOverride || $('manualQ').value.trim();
+  if (!question && !imageBase64) return;
+  if (isGenerating && !isTest) {
+    setStatus('⚡ An answer is already generating…');
+    return;
+  }
+  isGenerating = true;
+  $('askBtn').disabled = true;
+  activeAbortController = new AbortController();
+
+  let effectiveProvider = currentProvider;
+  let cfg = PROVIDERS[effectiveProvider];
+  let effectiveKey = $('apiKey').value.trim();
+
+  // Fallback check for Z.AI
+  if (!effectiveKey && effectiveProvider === 'zai' && (envConfig.zaiApiKeyAvailable || envConfig.zAiApiKeyAvailable)) {
+    effectiveKey = 'env_placeholder';
+  }
+
+  if (imageBase64 && effectiveProvider === 'groq' && effectiveKey) {
+    setStatus('🔍 Processing screen text OCR…');
+    let extractedText = '';
+    try {
+      const visionRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveKey}` },
+        body: JSON.stringify({
+          model: 'qwen/qwen3.6-27b',
+          max_tokens: 1500,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: 'You are an OCR and code extraction engine. Extract ONLY the technical interview question, coding instructions, code snippets, method signatures, constraints, and test cases shown in this screen. Output the pure text faithfully, no commentary.' },
+              { type: 'image_url', image_url: { url: imageBase64 } }
+            ]
+          }]
+        })
+      });
+      if (visionRes.ok) {
+        const vData = await visionRes.json();
+        const textOut = vData.choices?.[0]?.message?.content?.trim();
+        if (textOut && textOut.length > 20) {
+          extractedText = textOut;
+        }
+      }
+    } catch (vErr) {
+      console.warn('Vision OCR attempt failed:', vErr);
+    }
+
+    if (extractedText) {
+      question = 'INTERVIEW SCREEN CODING PROBLEM (EXTRACTED FROM SCREEN):\n' + extractedText + '\n\nPlease solve this complete coding problem with production-ready code according to our Senior Architect standards.';
+      setStatus('⚡ Solving screen coding problem with ' + cfg.model + '…');
+    } else {
+      question = (question ? question + '\n\n' : '') + '[Screen image captured. Please solve the requested problem shown on screen with complete production code.]';
+    }
+    imageBase64 = null;
+  }
+
+  if (!isTest) ipcRenderer.send('question-asked', question);
+  if (!sessionStart && !isTest) { sessionStart = new Date().toISOString(); currentSessionQA = []; }
+
+  if (!testMode && !effectiveKey) {
+    setStatus('⚠ Enter your API key first (or enable Test Mode)');
+    ipcRenderer.send(isTest ? 'test-ai-error' : 'answer-chunk', '⚠ **Missing API Key**\nPlease enter your API key in the control panel to use this model, or turn on Test Mode.');
+    if (!isTest) ipcRenderer.send('answer-done');
+    isGenerating = false;
+    $('askBtn').disabled = false;
+    return;
+  }
+
+  if (testMode) {
+    setStatus('🧪 Generating mock answer…');
+    let fullAnswer = '';
+    await mockAskQuestion(question, isTest);
+    fullAnswer = MOCK_ANSWERS.default.join('');
+    ipcRenderer.send(isTest ? 'test-ai-done' : 'answer-done');
+    const qaEntry = { question, answer: fullAnswer, time: new Date().toISOString() };
+    if (!isTest) currentSessionQA.push(qaEntry);
+    if (isTest) testChatHistory.push(qaEntry);
+    autoSaveSession();
+    bumpUsage();
+    setStatus(`🧪 Mock answer ready — ${currentSessionQA.length} Q&A this session`);
+    isGenerating = false;
+    $('askBtn').disabled = false;
+    return;
+  }
+
+  let fullAnswer = '';
+  setStatus('Generating answer…');
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    let body;
+
+    const historyMessages = [];
+    const qLower = question.toLowerCase();
+    const isAutoFollowUp = question.startsWith('[FOLLOW-UP QUESTION]') || 
+                           qLower.startsWith('why do') ||
+                           qLower.startsWith('why have') ||
+                           qLower.startsWith('can you implement') ||
+                           qLower.startsWith('can you write') ||
+                           qLower.startsWith('how will you write') ||
+                           qLower.startsWith('what about') ||
+                           qLower.includes('in that case') ||
+                           qLower.includes('in this map') ||
+                           qLower.includes('that code') ||
+                           qLower.includes('previous');
+
+    const recentHistory = isTest ? testChatHistory : currentSessionQA;
+    if (isAutoFollowUp && recentHistory.length > 0) {
+      const recentQA = recentHistory.slice(-4);
+      for (const qa of recentQA) {
+        if (qa.role === 'candidate') {
+          historyMessages.push({ role: 'user', content: `Candidate's response: "${qa.text}"` });
+        } else if (qa.question && qa.answer) {
+          historyMessages.push({ role: 'user', content: `Interviewer: "${qa.question}"` });
+          historyMessages.push({ role: 'assistant', content: qa.answer });
+        }
+      }
+      const cleanQ = question.replace('[FOLLOW-UP QUESTION]: ', '');
+      historyMessages.push({ role: 'user', content: `Interviewer's current question/request (maintaining context with the preceding discussion above): "${cleanQ}"` });
+    } else if (imageBase64) {
+      if (['zai', 'gemini', 'gemini2', 'groq', 'chatgpt'].includes(effectiveProvider)) {
+        historyMessages.push({
+          role: 'user',
+          content: [
+            { type: 'text', text: `Interviewer's question/screen: "${question}"` },
+            { type: 'image_url', image_url: { url: imageBase64 } }
+          ]
+        });
+      } else {
+        const [prefix, data] = imageBase64.split(',');
+        const mime = prefix.split(':')[1].split(';')[0];
+        historyMessages.push({
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mime, data: data } },
+            { type: 'text', text: `Interviewer's question/screen: "${question}"` }
+          ]
+        });
+      }
+    } else {
+      historyMessages.push({ role: 'user', content: `Practice interview question: "${question}"` });
+    }
+    const modelsToTry = [cfg.model || 'gemini-3.5-flash-lite'];
+
+    let res;
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const currentModel = modelsToTry[i];
+      const isOpenAICompatible = ['zai', 'gemini', 'gemini2', 'groq', 'chatgpt'].includes(effectiveProvider);
+
+      if (isOpenAICompatible) {
+        headers['Authorization'] = `Bearer ${effectiveKey}`;
+        
+        let sanitizedMessages = historyMessages;
+        if (effectiveProvider === 'groq' && currentModel !== 'qwen/qwen3.6-27b') {
+          sanitizedMessages = historyMessages.map(m => {
+            if (typeof m.content === 'string') return m;
+            if (Array.isArray(m.content)) {
+              const textObj = m.content.find(item => item.type === 'text');
+              return { role: m.role, content: textObj ? textObj.text : '' };
+            }
+            return { role: m.role, content: String(m.content || '') };
+          });
+        }
+
+        let sysContent = buildSystemPrompt(question);
+        if (effectiveProvider === 'groq') {
+          sysContent = buildGroqSystemPrompt(question);
+        } else if (effectiveProvider === 'chatgpt') {
+          sysContent = buildChatGPTSystemPrompt(question);
+        }
+
+        const maxTokensBudget = effectiveProvider === 'groq' ? 2800 : 4096;
+
+        const requestBody = {
+          model: currentModel,
+          stream: true,
+          messages: [
+            { role: 'system', content: sysContent },
+            ...sanitizedMessages
+          ]
+        };
+
+        if (effectiveProvider === 'chatgpt') {
+          requestBody.max_completion_tokens = maxTokensBudget;
+        } else {
+          requestBody.max_tokens = maxTokensBudget;
+        }
+
+        if (effectiveProvider === 'zai' && currentModel === 'glm-4.7') {
+          requestBody.thinking = { type: 'enabled' };
+          requestBody.temperature = 1.0;
+          requestBody.max_tokens = 4096;
+        }
+        body = JSON.stringify(requestBody);
+      } else {
+        headers['x-api-key'] = effectiveKey;
+        headers['anthropic-version'] = '2023-06-01';
+        body = JSON.stringify({
+          model: currentModel,
+          max_tokens: 1000,
+          stream: true,
+          system: buildSystemPrompt(question),
+          messages: historyMessages
+        });
+      }
+
+      const endpoint = isOpenAICompatible
+        ? `${cfg.apiBase}/chat/completions`
+        : `${cfg.apiBase}/messages`;
+
+      res = await fetch(endpoint, { 
+        method: 'POST', 
+        headers, 
+        body,
+        signal: activeAbortController.signal
+      });
+
+      if (res.ok) {
+        break;
+      } else if (i < modelsToTry.length - 1) {
+        setStatus(`⚠️ Model ${currentModel} failed (HTTP ${res.status}), trying fallback...`);
+      }
+    }
+
+    if (!res.ok) {
+      let errMsg = `HTTP ${res.status}`;
+      try {
+        const errObj = await res.json();
+        if (errObj.message) {
+          errMsg = errObj.message;
+        } else if (errObj.error?.message) {
+          errMsg = errObj.error.message;
+        } else if (Array.isArray(errObj) && errObj[0]?.error?.message) {
+          errMsg = errObj[0].error.message;
+        }
+      } catch (e) {}
+
+      if (res.status === 402) {
+        errMsg = `Payment Required (HTTP 402): Your ${effectiveProvider.toUpperCase()} account needs credits/billing activated at their cloud dashboard. Tip: Switch to Groq (openai/gpt-oss-120b) or Google Gemini for free usage.`;
+      } else if (res.status === 401) {
+        errMsg = `Invalid API Key (HTTP 401): Please verify your ${effectiveProvider.toUpperCase()} API key in the control panel.`;
+      } else if (res.status === 429) {
+        errMsg = `Rate Limit Exceeded (HTTP 429): Too many requests. Please wait a moment or switch provider.`;
+      }
+      throw new Error(errMsg);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let inThinkTag = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const dataStr = line.slice(6).trim();
+        if (dataStr === '[DONE]') continue;
+        try {
+          const p = JSON.parse(dataStr);
+          let chunk = '';
+          if (['grok', 'zai', 'gemini', 'gemini2', 'groq', 'chatgpt'].includes(effectiveProvider)) {
+            chunk = p.choices?.[0]?.delta?.content || '';
+          } else {
+            if (p.type === 'content_block_delta' && p.delta?.text) {
+              chunk = p.delta.text;
+            }
+          }
+          if (chunk) {
+            fullAnswer += chunk;
+            let displayChunk = chunk;
+            
+            if (inThinkTag) {
+              if (displayChunk.includes('</think>')) {
+                inThinkTag = false;
+                displayChunk = displayChunk.split('</think>')[1] || '';
+              } else {
+                displayChunk = '';
+              }
+            } else if (displayChunk.includes('<think>')) {
+              const parts = displayChunk.split('<think>');
+              if (parts[1] && parts[1].includes('</think>')) {
+                displayChunk = parts[0] + (parts[1].split('</think>')[1] || '');
+              } else {
+                inThinkTag = true;
+                displayChunk = parts[0] || '';
+              }
+            }
+
+            if (displayChunk) {
+              ipcRenderer.send(isTest ? 'test-ai-chunk' : 'answer-chunk', displayChunk);
+            }
+          }
+        } catch {}
+      }
+    }
+    
+    fullAnswer = fullAnswer.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+    ipcRenderer.send(isTest ? 'test-ai-done' : 'answer-done');
+    const qaEntry = { question, answer: fullAnswer, time: new Date().toISOString() };
+    if (!isTest) currentSessionQA.push(qaEntry);
+    if (isTest) testChatHistory.push(qaEntry);
+    autoSaveSession();
+    bumpUsage();
+    setStatus(`✓ Answer ready — ${currentSessionQA.length} Q&A this session`);
+
+  } catch(err) {
+    if (err.name === 'AbortError') {
+      setStatus('Answer generation cancelled.');
+    } else {
+      const errText = '\n\n⚠ **API Error**: ' + err.message + '\n*(Check your API key and model selection)*';
+      ipcRenderer.send(isTest ? 'test-ai-error' : 'answer-chunk', errText);
+      if (!isTest) ipcRenderer.send('answer-done');
+      setStatus('❌ Error: ' + err.message);
+      console.error('API error:', err);
+    }
+  }
+
+  isGenerating = false;
+  $('askBtn').disabled = false;
+  activeAbortController = null;
+}
+
+// ── SESSION ───────────────────────────────────────────────
+function autoSaveSession() {
+  if (!currentSessionQA.length) return;
+  ipcRenderer.send('save-session', { date: sessionStart, role: currentRole, company: '', qa: currentSessionQA });
+}
+
+function clearAll() {
+  ipcRenderer.send('answer-clear');
+  $('transcript').innerHTML = '<span class="t-placeholder">Transcript will appear here…</span>';
+  $('manualQ').value = '';
+  finalTranscript = '';
+  window.currentInterviewerText = '';
+  sessionStart = null;
+  currentSessionQA = [];
+  setStatus('Cleared');
+}
+
+async function loadSessions() {
+  const sessions = await ipcRenderer.invoke('get-sessions');
+  const list = $('sessionList');
+  if (!sessions.length) { list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:12px 0;">No sessions yet.</div>'; return; }
+  list.innerHTML = sessions.map((s, i) => `
+    <div class="session-card" onclick="exportSession(${i})">
+      <div class="sdate">${new Date(s.date).toLocaleString()} · ${s.role || 'General'}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="smeta"></div>
+        <div class="scount">${s.qa.length} Q&As · Export ↗</div>
+      </div>
+    </div>`).join('');
+  window._sessions = sessions;
+}
+
+function exportSession(i) {
+  if (window._sessions) ipcRenderer.send('export-session-pdf', window._sessions[i]);
+}
+
+// ── SETTINGS ──────────────────────────────────────────────
+function setOpacity(v) {
+  $('opacityVal').textContent = v + '%';
+  ipcRenderer.send('set-opacity', v / 100);
+  saveS({ opacity: v / 100 });
+}
+function setFontSize(v) {
+  $('fsVal').textContent = v + 'px';
+  ipcRenderer.send('overlay-fontsize', parseInt(v));
+  saveS({ fontSize: parseInt(v) });
+}
+function setSilenceThreshold(v) {
+  silenceThresholdDb = Number(v);
+  $('silenceVal').textContent = v + ' dB';
+  saveS({ silenceThresholdDb });
+}
+function setTheme(el, theme) {
+  $('themeRow').querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  ipcRenderer.send('overlay-theme', theme);
+  saveS({ theme });
+}
+function moveToDisplay(index) {
+  ipcRenderer.send('move-overlay-to-display', parseInt(index));
+}
+
+// ── USAGE ─────────────────────────────────────────────────
+function updateUsage() {
+  const today = new Date().toDateString();
+  usageCount = parseInt(localStorage.getItem('usage_' + today) || '0');
+  $('usageLabel').textContent = usageCount + ' questions today';
+  $('usageFill').style.width = Math.min(100, (usageCount / 30) * 100) + '%';
+}
+function bumpUsage() {
+  const today = new Date().toDateString();
+  usageCount++;
+  localStorage.setItem('usage_' + today, usageCount);
+  updateUsage();
+}
+
+// ── IPC EVENTS ────────────────────────────────────────────
+ipcRenderer.on('overlay-visibility', (_, v) => {
+  $('overlayBadge').textContent = 'Overlay: ' + (v ? 'ON' : 'OFF');
+  $('overlayBadge').className = 'obadge ' + (v ? 'on' : 'off');
+});
+ipcRenderer.on('opacity-changed', (_, pct) => {
+  $('opacitySlider').value = pct;
+  $('opacityVal').textContent = pct + '%';
+});
+
+function setStatus(msg) { $('statusMsg').textContent = msg; }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+ipcRenderer.on('ask-followup', (_, text) => {
+  if (text && text.trim()) {
+    console.log('[Follow-up Bar] Received user typed question:', text);
+    setStatus('⚡ Generating answer for: ' + (text.length > 35 ? text.substring(0, 35) + '…' : text));
+    askQuestion(text.trim());
+  }
+});
+
+ipcRenderer.on('test-ai-request', (_, text) => {
+  askQuestion(text, null, true);
+});
+
+ipcRenderer.on('end-session-remote', () => {
+  endInterview();
+});
+
+ipcRenderer.on('toggle-mic-remote', async () => {
+  await toggleMic();
+  ipcRenderer.send('mic-state-changed', isListening);
+});
+
+ipcRenderer.on('toggle-long-q-remote', () => {
+  isLongQuestionMode = !isLongQuestionMode;
+  ipcRenderer.send('long-q-state-changed', isLongQuestionMode);
+  if (isLongQuestionMode) {
+    setStatus('⏱ Long Question Mode ON. I will keep listening until you turn it off.');
+  } else {
+    setStatus('⏱ Long Question Mode OFF. Generating answer now if text exists.');
+    const textToCheck = window.currentInterviewerText || finalTranscript;
+    if (textToCheck.trim().length > 5 && !isGenerating) {
+      finalTranscript = textToCheck;
+      window.currentInterviewerText = '';
+      triggerAnswer();
+    }
+  }
+});
+
+ipcRenderer.on('abort-generation', () => {
+  if (activeAbortController) {
+    activeAbortController.abort();
+    activeAbortController = null;
+  }
+  isGenerating = false;
+  $('askBtn').disabled = false;
+  setStatus('Generation stopped / cleared');
+});
+
+ipcRenderer.on('force-trigger-answer', () => {
+  const current = (window.currentInterviewerText || finalTranscript || $('manualQ').value || candidateTranscript || '').trim();
+  if (current && !isGenerating) {
+    finalTranscript = '';
+    candidateTranscript = '';
+    window.currentInterviewerText = '';
+    const q = cleanQuestionForAI(current);
+    setStatus('⚡ Force generating answer for: ' + (q.length > 40 ? q.substring(0, 40) + '…' : q));
+    askQuestion(q);
+  } else if (isGenerating) {
+    setStatus('Already generating answer…');
+  } else {
+    setStatus('Transcript is empty. Speak or play audio first.');
+  }
+});
+
+ipcRenderer.on('process-screenshot', (_, base64Image) => {
+  setStatus('Screenshot captured — analyzing code…');
+  askQuestion('Please solve the coding problem shown on this screen.', base64Image);
+});
+

@@ -1,0 +1,46 @@
+{
+  "name": "interviewai-pro",
+  "version": "2.0.0",
+  "description": "AMD Audio Service",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:debug": "electron . --enable-logging",
+    "install-electron": "npm install electron --save-dev",
+    "pack": "electron-builder --dir",
+    "dist:win": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.interviewai.pro",
+    "productName": "AMD Audio Service",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "README.md",
+      ".env.example"
+    ],
+    "win": {
+      "icon": "src/assets/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "pdf-parse": "^2.4.5",
+    "ws": "^8.21.3"
+  }
+}

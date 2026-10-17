@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg: rgba(10,12,18,0.92);
+  --border: rgba(29,158,117,0.35);
+  --accent: #1D9E75;
+  --accent2: #0F6E56;
+  --text: rgba(255,255,255,0.93);
+  --text-muted: rgba(255,255,255,0.45);
+  --text-dim: rgba(255,255,255,0.25);
+  --drag-bg: rgba(29,158,117,0.1);
+  --q-bg: rgba(29,158,117,0.12);
+  --q-border: rgba(29,158,117,0.3);
+  --a-bg: rgba(255,255,255,0.04);
+  --a-border: rgba(255,255,255,0.08);
+  --fs: 13px;
+}
+body { background:transparent; font-family:'Segoe UI',sans-serif; overflow:hidden; }
+.shell {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── TOP BAR ── */
+.bar {
+  background: var(--drag-bg);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: move;
+  flex-shrink: 0;
+}
+.bar-left { display:flex; align-items:center; gap:7px; }
+.orb { width:7px; height:7px; border-radius:50%; background:var(--accent); }
+.orb.pulse { animation: p 2s ease-in-out infinite; }
+@keyframes p { 0%,100%{opacity:1}50%{opacity:0.25} }
+.brand { font-size:10px; font-weight:600; color:rgba(29,158,117,0.85); letter-spacing:0.9px; text-transform:uppercase; }
+.status { font-size:10px; color:var(--text-dim); }
+
+/* ── OPACITY SLIDER IN HEADER ── */
+.opacity-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  -webkit-app-region: no-drag;
+}
+.opacity-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 58px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  outline: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.opacity-slider:hover {
+  background: rgba(29, 158, 117, 0.4);
+}
+.opacity-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(29, 158, 117, 0.8);
+  transition: transform 0.1s;
+}
+.opacity-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+  background: #25c996;
+}
+.opacity-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-family: Consolas, monospace;
+  min-width: 26px;
+  user-select: none;
+}
+
+/* ── CHAT AREA ── */
+.chat-container {
+  flex:1;
+  overflow-y:auto;
+  padding:10px 10px 6px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  min-height:0;
+  scrollbar-width:thin;
+  scrollbar-color:rgba(29,158,117,0.25) transparent;
+}
+.chat-container::-webkit-scrollbar { width:3px; }
+.chat-container::-webkit-scrollbar-thumb { background:rgba(29,158,117,0.3); border-radius:2px; }
+
+/* ── IDLE STATE ── */
+.idle { display:flex; align-items:center; gap:8px; padding:6px 0; justify-content:center; }
+.idle-txt { font-size:11px; color:var(--text-dim); }
+kbd { font-size:10px; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12); border-radius:4px; padding:1px 5px; font-family:Consolas,monospace; color:rgba(255,255,255,0.45); }
+
+/* ── CHAT BUBBLES ── */
+.chat-pair {
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  animation: fadeSlideIn 0.3s ease-out;
+}
+@keyframes fadeSlideIn {
+  from { opacity:0; transform:translateY(8px); }
+  to { opacity:1; transform:translateY(0); }
+}
+
+.bubble {
+  border-radius:10px;
+  padding:8px 11px;
+  font-size:var(--fs);
+  line-height:1.65;
+  position:relative;
+  max-width:95%;
+}
+
+/* Question bubble — right-aligned (interviewer) */
+.bubble-q {
+  background: var(--q-bg);
+  border:1px solid var(--q-border);
+  align-self:flex-end;
+  border-bottom-right-radius:3px;
+  color:rgba(255,255,255,0.8);
+}
+.bubble-q .bubble-label {
+  font-size:9px;
+  text-transform:uppercase;
+  letter-spacing:0.8px;
+  color:rgba(29,158,117,0.7);
+  margin-bottom:3px;
+  font-weight:600;
+}
+
+/* Answer bubble — left-aligned (AI) */
+.bubble-a {
+  background: var(--a-bg);
+  border:1px solid var(--a-border);
+  align-self:flex-start;
+  border-bottom-left-radius:3px;
+  color:var(--text);
+}
+.bubble-a .bubble-label {
+  font-size:9px;
+  text-transform:uppercase;
+  letter-spacing:0.8px;
+  color:rgba(29,158,117,0.55);
+  margin-bottom:3px;
+  font-weight:600;
+}
+.bubble-a .bubble-content {
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+
+/* Typing cursor */
+.cursor {
+  display:inline-block;
+  width:2px;
+  height:calc(var(--fs) * 1.1);
+  background:var(--accent);
+  margin-left:1px;
+  vertical-align:middle;
+  animation:blink 0.75s step-end infinite;
+}
+@keyframes blink { 50%{opacity:0} }
+
+/* Markdown Styles */
+pre { background:rgba(0,0,0,0.35); padding:8px; border-radius:6px; overflow-x:auto; font-family:Consolas, monospace; font-size:0.9em; margin:6px 0; border:1px solid rgba(255,255,255,0.08); }
+code { font-family:Consolas, monospace; background:rgba(0,0,0,0.35); padding:2px 4px; border-radius:4px; font-size:0.9em; color:#e0c088; }
+pre code { background:transparent; padding:0; color:#d4d4d4; }
+strong { font-weight:600; color:var(--accent); }
+
+/* Bookmark button */
+.bubble-actions {
+  display:flex;
+  gap:6px;
+  margin-top:4px;
+  justify-content:flex-start;
+}
+.bk-btn {
+  -webkit-app-region:no-drag;
+  background:none;
+  border:1px solid rgba(29,158,117,0.2);
+  border-radius:5px;
+  color:rgba(29,158,117,0.5);
+  font-size:9px;
+  padding:2px 7px;
+  cursor:pointer;
+  transition:all 0.15s;
+  font-family:'Segoe UI',sans-serif;
+}
+.bk-btn:hover { background:rgba(29,158,117,0.12); color:#1D9E75; }
+.bk-btn.saved { background:rgba(29,158,117,0.15); color:#1D9E75; border-color:#1D9E75; }
+
+/* ── BOTTOM HINT BAR ── */
+.bottom-bar {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:4px 8px;
+  background:rgba(0,0,0,0.3);
+  border-top:1px solid var(--border);
+}
+.hint-text { color:var(--text-muted); font-size:10px; }
+.hint-keys { display:flex; gap:6px; align-items:center; }
+.hint-keys kbd {
+  background:rgba(255,255,255,0.1);
+  padding:1px 4px;
+  border-radius:3px;
+  font-family:monospace;
+  font-size:9px;
+  color:var(--text-dim);
+}
+.end-btn, .capture-btn, .mic-toggle-btn {
+  -webkit-app-region:no-drag;
+  cursor:pointer;
+  transition:all 0.15s;
+  font-family:'Segoe UI',sans-serif;
+  letter-spacing:0.3px;
+  background:rgba(255,255,255,0.1);
+  padding:2px 8px;
+  border-radius:4px;
+}
+.end-btn:hover { background:rgba(240,100,100,0.25); color:#f09595; }
+.capture-btn:hover, .mic-toggle-btn:hover { background:rgba(29,158,117,0.25); color:#1D9E75; }
+
+/* ── RESIZE GRIP ── */
+.resize-grip {
+  position:absolute;
+  bottom:0;
+  right:0;
+  width:16px;
+  height:16px;
+  cursor:nwse-resize;
+  z-index:10;
+  -webkit-app-region:no-drag;
+}
+.resize-grip::after {
+  content:'';
+  position:absolute;
+  bottom:3px;
+  right:3px;
+  width:8px;
+  height:8px;
+  border-right:2px solid rgba(29,158,117,0.4);
+  border-bottom:2px solid rgba(29,158,117,0.4);
+}
+.resize-edge-right {
+  position:absolute;
+  top:0;
+  right:0;
+  width:4px;
+  height:100%;
+  cursor:ew-resize;
+  -webkit-app-region:no-drag;
+}
+.resize-edge-bottom {
+  position:absolute;
+  bottom:0;
+  left:0;
+  width:100%;
+  height:4px;
+  cursor:ns-resize;
+  -webkit-app-region:no-drag;
+}
+.shell { position:relative; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="bar" title="Click & Drag to move live interview panel">
+    <div class="bar-left">
+      <span style="cursor: move; -webkit-app-region: drag; color: var(--accent); font-weight:bold; font-size: 14px; margin-right:4px;">⠿</span>
+      <div class="orb pulse" id="orb"></div>
+      <span class="brand" style="cursor: move;">InterviewAI Pro</span>
+      <div class="opacity-ctrl" title="Adjust Overlay Opacity (20% - 100%)">
+        <span style="font-size: 10px; color: var(--text-dim); user-select:none;">☀️</span>
+        <input type="range" class="opacity-slider" id="overlayOpacitySlider" min="20" max="100" value="92" oninput="changeOverlayOpacity(this.value)">
+        <span class="opacity-label" id="overlayOpacityVal">92%</span>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="status" id="st" style="cursor: move;">Stealth active</span>
+      <button class="bk-btn" style="border:none; padding:2px 6px; cursor:pointer; -webkit-app-region:no-drag; color:var(--text-dim);" onclick="toggleCollapse()" id="collapseBtn">[-]</button>
+    </div>
+  </div>
+
+  <div class="chat-container" id="chatContainer">
+    <div class="idle" id="idle">
+      <span class="idle-txt">Waiting for questions…</span>
+      <kbd>Ctrl+Shift+H / Alt+H</kbd><span class="idle-txt">hide</span>
+      <kbd>Ctrl+Shift+C / Alt+C</kbd><span class="idle-txt">panel</span>
+      <kbd>Ctrl+Shift+A / Alt+A</kbd><span class="idle-txt">answer</span>
+    </div>
+  </div>
+
+  <div class="followup-bar" style="display:flex; padding: 6px 10px; background: rgba(0,0,0,0.4); border-top: 1px solid var(--border); gap: 6px; -webkit-app-region:no-drag;">
+    <input type="text" id="followUpInput" placeholder="Type a follow-up question..." style="flex:1; background: var(--bg); color: var(--text); border: 1px solid rgba(29,158,117,0.3); border-radius: 4px; padding: 4px 8px; font-size: 11px; outline: none; font-family:'Segoe UI',sans-serif;" onkeydown="if(event.key==='Enter') sendFollowUp()">
+    <button onclick="sendFollowUp()" style="background: var(--accent); color: #fff; border: none; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px; font-family:'Segoe UI',sans-serif; transition: background 0.15s;" onmouseover="this.style.background='var(--accent2)'" onmouseout="this.style.background='var(--accent)'">Ask</button>
+  </div>
+  <div class="bottom-bar">
+    <span class="hint-text" id="qCount">0 Q&amp;As</span>
+    <div class="hint-keys">
+      <button class="mic-toggle-btn" id="overlayMicBtn" onclick="toggleMic()">🎤 Mic: ON</button>
+      <button class="capture-btn" id="overlayCaptureBtn" onclick="captureScreen()">📸 Screen</button>
+      <button class="capture-btn" id="overlayFollowUpBtn" onclick="toggleFollowUpOverlay()">🔁 Follow-up: OFF</button>
+      <button class="capture-btn" id="longQBtn" onclick="toggleLongQ()">⏱ Long Q: OFF</button>
+      <button class="capture-btn" id="autoScrollBtn" onclick="toggleAutoScroll()" title="Toggle Auto Scroll">⏬ Scroll: ON</button>
+      <button class="end-btn" onclick="endSession()">❌ End</button>
+    </div>
+  </div>
+  <div class="resize-edge-right"></div>
+  <div class="resize-edge-bottom"></div>
+  <div class="resize-grip"></div>
+</div>
+
+<script>
+const { ipcRenderer } = require('electron');
+const $ = id => document.getElementById(id);
+let cursor = null;
+let currentQ = '', currentA = '';
+let currentPair = null;
+let currentAnswerContent = null;
+let qaCount = 0;
+let autoScroll = true;
+
+function changeOverlayOpacity(val) {
+  const op = Math.max(0.2, Math.min(1.0, parseFloat(val) / 100));
+  const pct = Math.round(op * 100);
+  const valLabel = $('overlayOpacityVal');
+  if (valLabel) valLabel.textContent = pct + '%';
+  ipcRenderer.send('set-opacity', op);
+}
+
+// Sync initial opacity from settings
+ipcRenderer.invoke('get-settings').then(settings => {
+  if (settings && settings.opacity !== undefined) {
+    const pct = Math.round(settings.opacity * 100);
+    const slider = $('overlayOpacitySlider');
+    const valLabel = $('overlayOpacityVal');
+    if (slider) slider.value = pct;
+    if (valLabel) valLabel.textContent = pct + '%';
+  }
+}).catch(() => {});
+
+ipcRenderer.on('opacity-updated', (_, val) => {
+  const pct = Math.round(val * 100);
+  const slider = $('overlayOpacitySlider');
+  const valLabel = $('overlayOpacityVal');
+  if (slider) slider.value = pct;
+  if (valLabel) valLabel.textContent = pct + '%';
+});
+
+function show(el, d='block') { el.style.display = d; }
+function hide(el) { el.style.display = 'none'; }
+
+function toggleCollapse() {
+  ipcRenderer.send('toggle-collapse-overlay');
+}
+ipcRenderer.on('overlay-collapsed', (_, isCollapsed) => {
+  if (isCollapsed) {
+    hide($('chatContainer'));
+    const bottomBar = document.querySelector('.bottom-bar');
+    if (bottomBar) hide(bottomBar);
+    $('collapseBtn').textContent = '[+]';
+  } else {
+    show($('chatContainer'), 'flex');
+    const bottomBar = document.querySelector('.bottom-bar');
+    if (bottomBar) show(bottomBar, 'flex');
+    $('collapseBtn').textContent = '[-]';
+  }
+});
+
+function clearOverlayChat() {
+  ipcRenderer.send('answer-clear');
+  ipcRenderer.send('abort-generation');
+}
+function toggleMic() { ipcRenderer.send('toggle-mic-from-overlay'); }
+function toggleFollowUpOverlay() { ipcRenderer.send('toggle-followup-from-overlay'); }
+function captureScreen() { 
+  $('st').textContent = 'Capturing screen...';
+  ipcRenderer.send('capture-screen');
+}
+
+ipcRenderer.on('followup-state-changed', (_, state) => {
+  const btn = $('overlayFollowUpBtn');
+  if (btn) {
+    btn.textContent = state ? '🔁 Follow-up: ON' : '🔁 Follow-up: OFF';
+    btn.style.color = state ? '#ef9f27' : '';
+    btn.style.borderColor = state ? '#ef9f27' : '';
+    btn.style.background = state ? 'rgba(239,159,39,0.2)' : '';
+  }
+});
+
+ipcRenderer.on('mic-state-changed', (_, isListening) => {
+  const btn = $('overlayMicBtn');
+  if (btn) {
+    btn.textContent = isListening ? '🎤 Mic: ON' : '🎤 Mic: OFF';
+    btn.style.opacity = isListening ? '1' : '0.5';
+  }
+});
+
+let isLongQ = false;
+function toggleLongQ() {
+  ipcRenderer.send('toggle-long-q-from-overlay');
+}
+ipcRenderer.on('long-q-state-changed', (_, state) => {
+  isLongQ = state;
+  const btn = $('longQBtn');
+  if (btn) {
+    btn.textContent = isLongQ ? '⏱ Long Q: ON' : '⏱ Long Q: OFF';
+    btn.style.color = isLongQ ? '#F09595' : 'inherit';
+    btn.style.borderColor = isLongQ ? '#F09595' : 'rgba(29,158,117,0.5)';
+  }
+});
+
+function scrollToBottom() {
+  if (!autoScroll) return;
+  const c = $('chatContainer');
+  c.scrollTop = c.scrollHeight;
+}
+
+function toggleAutoScroll() {
+  autoScroll = !autoScroll;
+  const btn = $('autoScrollBtn');
+  if (autoScroll) {
+    btn.textContent = '⏬ Scroll: ON';
+    btn.style.color = 'var(--accent)';
+    btn.style.borderColor = 'var(--accent)';
+    scrollToBottom();
+  } else {
+    btn.textContent = '⏸ Scroll: OFF';
+    btn.style.color = 'var(--text-muted)';
+    btn.style.borderColor = 'var(--border)';
+  }
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderMarkdown(md) {
+  if (!md) return '';
+  
+  const codeBlocks = [];
+  let processed = md.replace(/```([\s\S]*?)```/g, (match, code) => {
+    codeBlocks.push('<pre><code>' + escapeHtml(code) + '</code></pre>');
+    return '%%CODEBLOCK' + (codeBlocks.length - 1) + '%%';
+  });
+  
+  processed = escapeHtml(processed);
+  
+  codeBlocks.forEach((block, i) => {
+    processed = processed.replace('%%CODEBLOCK' + i + '%%', block);
+  });
+  
+  const lines = processed.split('\n');
+  let html = '';
+  let inList = false;
+  
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    line = line.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    line = line.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    line = line.replace(/`([^`]+)`/g, '<code>$1</code>');
+    
+    const trimmed = line.trim();
+    
+    if (trimmed.startsWith('### ')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="font-weight:700;margin:6px 0 3px;color:#1D9E75;font-size:13px;">' + trimmed.slice(4) + '</div>';
+    } else if (trimmed.startsWith('## ')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="font-weight:700;margin:8px 0 3px;color:#1D9E75;font-size:14px;">' + trimmed.slice(3) + '</div>';
+    }
+    else if (/^[-*•]\s/.test(trimmed)) {
+      if (!inList) { html += '<ul style="margin:3px 0;padding-left:16px;">'; inList = true; }
+      html += '<li style="margin:2px 0;">' + trimmed.replace(/^[-*•]\s+/, '') + '</li>';
+    }
+    else if (/^\d+[\.\)]\s/.test(trimmed)) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="margin:2px 0;padding-left:4px;">' + trimmed + '</div>';
+    }
+    else if (trimmed.startsWith('<pre>')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += line;
+    }
+    else if (trimmed === '') {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="height:4px;"></div>';
+    }
+    else {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="margin:2px 0;">' + line + '</div>';
+    }
+  }
+  if (inList) html += '</ul>';
+  
+  return html;
+}
+let currentCandidatePair = null;
+let currentInterviewerPair = null;
+
+// 👤 Candidate Speech (You) - Single continuous bubble without duplicates
+ipcRenderer.on('candidate-interim', (_, text) => {
+  const idleEl = $('idle');
+  if (idleEl) hide(idleEl);
+
+  // If previous interviewer interim exists, dismiss it
+  if (currentInterviewerPair) {
+    currentInterviewerPair.remove();
+    currentInterviewerPair = null;
+  }
+
+  if (!currentCandidatePair) {
+    currentCandidatePair = document.createElement('div');
+    currentCandidatePair.className = 'chat-pair';
+    
+    const cBubble = document.createElement('div');
+    cBubble.className = 'bubble bubble-q';
+    cBubble.style.borderColor = 'rgba(96, 165, 250, 0.35)';
+    cBubble.style.background = 'rgba(96, 165, 250, 0.08)';
+    cBubble.innerHTML = '<div class="bubble-label" style="color:#60a5fa">👤 You</div><div class="bubble-content candidate-content" style="color:#dbeafe"></div>';
+    
+    currentCandidatePair.appendChild(cBubble);
+    $('chatContainer').appendChild(currentCandidatePair);
+  }
+  
+  const contentEl = currentCandidatePair.querySelector('.candidate-content');
+  if (contentEl) contentEl.innerText = text;
+  scrollToBottom();
+});
+
+ipcRenderer.on('candidate-spoke', (_, text) => {
+  if (currentCandidatePair) {
+    const contentEl = currentCandidatePair.querySelector('.candidate-content');
+    if (contentEl) contentEl.innerText = text;
+    // Do NOT destroy bubble immediately — keep it clean without creating duplicates!
+  }
+  scrollToBottom();
+});
+
+// 🎙️ Interviewer Speech (Meeting / Zoom / Teams)
+ipcRenderer.on('interviewer-interim', (_, text) => {
+  const idleEl = $('idle');
+  if (idleEl) hide(idleEl);
+
+  // When interviewer speaks, finalize candidate bubble
+  if (currentCandidatePair) {
+    currentCandidatePair = null;
+  }
+
+  if (!currentInterviewerPair) {
+    currentInterviewerPair = document.createElement('div');
+    currentInterviewerPair.className = 'chat-pair';
+    
+    const iBubble = document.createElement('div');
+    iBubble.className = 'bubble bubble-q';
+    iBubble.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+    iBubble.style.background = 'rgba(245, 158, 11, 0.08)';
+    iBubble.innerHTML = '<div class="bubble-label" style="color:#f59e0b">🎙️ Interviewer (Listening...)</div><div class="bubble-content interviewer-content" style="color:#fef3c7"></div>';
+    
+    currentInterviewerPair.appendChild(iBubble);
+    $('chatContainer').appendChild(currentInterviewerPair);
+  }
+  
+  const contentEl = currentInterviewerPair.querySelector('.interviewer-content');
+  if (contentEl) contentEl.innerText = text;
+  scrollToBottom();
+});
+ipcRenderer.on('show-question', (_, q) => {
+  if (currentCandidatePair) { currentCandidatePair = null; }
+  if (currentInterviewerPair) { currentInterviewerPair.remove(); currentInterviewerPair = null; }
+  currentQ = q; currentA = '';
+  const idleEl = $('idle');
+  if (idleEl) hide(idleEl);
+
+  // Create a new chat pair
+  currentPair = document.createElement('div');
+  currentPair.className = 'chat-pair';
+
+  // Question bubble
+  const qBubble = document.createElement('div');
+  qBubble.className = 'bubble bubble-q';
+  qBubble.innerHTML = '<div class="bubble-label">\uD83C\uDF99 Interviewer</div><div class="bubble-content">' + escapeHtml(q) + '</div>';
+
+  // Answer bubble
+  const aBubble = document.createElement('div');
+  aBubble.className = 'bubble bubble-a';
+  const aLabel = document.createElement('div');
+  aLabel.className = 'bubble-label';
+  aLabel.textContent = '\u26A1 AI Answer';
+  currentAnswerContent = document.createElement('div');
+  currentAnswerContent.className = 'bubble-content';
+
+  aBubble.appendChild(aLabel);
+  aBubble.appendChild(currentAnswerContent);
+
+  // Add cursor
+  cursor = document.createElement('span');
+  cursor.className = 'cursor';
+  currentAnswerContent.appendChild(cursor);
+
+  currentPair.appendChild(qBubble);
+  currentPair.appendChild(aBubble);
+  $('chatContainer').appendChild(currentPair);
+
+  $('st').textContent = 'Generating\u2026';
+  $('orb').style.background = '#FAC775';
+  scrollToBottom();
+});
+
+let pendingChunkUpdate = false;
+
+ipcRenderer.on('answer-chunk', (_, chunk) => {
+  if (!currentAnswerContent) return;
+  currentA += chunk;
+  
+  if (!pendingChunkUpdate) {
+    pendingChunkUpdate = true;
+    requestAnimationFrame(() => {
+      currentAnswerContent.innerHTML = renderMarkdown(currentA);
+      if (cursor) cursor.remove();
+      cursor = document.createElement('span');
+      cursor.className = 'cursor';
+      currentAnswerContent.appendChild(cursor);
+      scrollToBottom();
+      pendingChunkUpdate = false;
+    });
+  }
+});
+
+ipcRenderer.on('answer-done', () => {
+  if (currentAnswerContent) {
+    currentAnswerContent.innerHTML = renderMarkdown(currentA);
+  }
+  if (cursor) { cursor.remove(); cursor = null; }
+  $('st').textContent = 'Ready';
+  $('orb').style.background = '#4CAF50';
+  qaCount++;
+  $('qCount').textContent = qaCount + ' Q&A' + (qaCount !== 1 ? 's' : '');
+
+  // Add bookmark button to the pair
+  if (currentPair) {
+    const actions = document.createElement('div');
+    actions.className = 'bubble-actions';
+    const bkBtn = document.createElement('button');
+    bkBtn.className = 'bk-btn';
+    bkBtn.textContent = '\u2605 Save';
+    const savedQ = currentQ, savedA = currentA;
+    bkBtn.onclick = () => {
+      ipcRenderer.send('bookmark-answer', { question: savedQ, answer: savedA });
+      bkBtn.textContent = '\u2713 Saved';
+      bkBtn.classList.add('saved');
+    };
+    actions.appendChild(bkBtn);
+    currentPair.appendChild(actions);
+  }
+  scrollToBottom();
+});
+
+ipcRenderer.on('answer-clear', () => {
+  $('chatContainer').innerHTML = '';
+  const idle = document.createElement('div');
+  idle.className = 'idle';
+  idle.id = 'idle';
+  idle.innerHTML = '<span class="idle-txt">Waiting for questions…</span><kbd>Ctrl+Shift+H / Alt+H</kbd><span class="idle-txt">hide</span><kbd>Ctrl+Shift+C / Alt+C</kbd><span class="idle-txt">panel</span><kbd>Ctrl+Shift+A / Alt+A</kbd><span class="idle-txt">answer</span>';
+  $('chatContainer').appendChild(idle);
+  $('st').textContent = 'Stealth active';
+  $('orb').style.background = '#1D9E75';
+  currentQ = ''; currentA = '';
+  currentPair = null;
+  currentCandidatePair = null;
+  currentInterviewerPair = null;
+  currentAnswerContent = null;
+  qaCount = 0;
+  $('qCount').textContent = '0 Q&As';
+  if (cursor) { cursor.remove(); cursor = null; }
+});
+
+ipcRenderer.on('set-theme', (_, theme) => {
+  const root = document.documentElement;
+  if (theme === 'light') {
+    root.style.setProperty('--bg','rgba(248,250,252,0.95)');
+    root.style.setProperty('--text','rgba(10,12,20,0.93)');
+    root.style.setProperty('--text-muted','rgba(10,12,20,0.5)');
+    root.style.setProperty('--text-dim','rgba(10,12,20,0.3)');
+    root.style.setProperty('--q-bg','rgba(29,158,117,0.08)');
+    root.style.setProperty('--a-bg','rgba(0,0,0,0.03)');
+    root.style.setProperty('--a-border','rgba(0,0,0,0.08)');
+  } else if (theme === 'dark') {
+    root.style.setProperty('--bg','rgba(10,12,18,0.92)');
+    root.style.setProperty('--text','rgba(255,255,255,0.93)');
+    root.style.setProperty('--text-muted','rgba(255,255,255,0.45)');
+    root.style.setProperty('--text-dim','rgba(255,255,255,0.25)');
+    root.style.setProperty('--q-bg','rgba(29,158,117,0.12)');
+    root.style.setProperty('--a-bg','rgba(255,255,255,0.04)');
+    root.style.setProperty('--a-border','rgba(255,255,255,0.08)');
+  } else if (theme === 'midnight') {
+    root.style.setProperty('--bg','rgba(4,6,10,0.97)');
+    root.style.setProperty('--text','rgba(220,255,240,0.95)');
+    root.style.setProperty('--text-muted','rgba(29,158,117,0.7)');
+    root.style.setProperty('--text-dim','rgba(29,158,117,0.35)');
+    root.style.setProperty('--q-bg','rgba(29,158,117,0.15)');
+    root.style.setProperty('--a-bg','rgba(220,255,240,0.04)');
+    root.style.setProperty('--a-border','rgba(220,255,240,0.08)');
+  }
+});
+
+ipcRenderer.on('set-fontsize', (_, size) => {
+  document.documentElement.style.setProperty('--fs', size + 'px');
+});
+
+function endSession() {
+  $('st').textContent = 'Ending...';
+  try {
+    ipcRenderer.send('end-session-from-overlay');
+  } catch(e) {
+    alert("IPC Error: " + e);
+  }
+}
+
+// Fully interactive overlay (mouse ignore disabled to prevent freezing)
+
+function sendFollowUp() {
+  const input = $('followUpInput');
+  const q = input.value.trim();
+  if (q) {
+    ipcRenderer.send('ask-followup', q);
+    input.value = '';
+    $('st').textContent = 'Generating answer…';
+  }
+}
+
+window.addEventListener('keydown', e => {
+  if (e.altKey && e.key.toLowerCase() === 'h') { ipcRenderer.send('toggle-overlay-visibility'); }
+  if (e.altKey && e.key.toLowerCase() === 'c') { ipcRenderer.send('show-control-panel'); }
+  if (e.altKey && e.key.toLowerCase() === 'a') { ipcRenderer.send('force-trigger-answer'); }
+  if (e.altKey && e.key.toLowerCase() === 'x') { clearOverlayChat(); }
+});
+
+</script>
+</body>
+</html>

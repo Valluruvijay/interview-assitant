@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Test AI</title>
+<style>
+  :root {
+    --bg: #1e1e1e;
+    --text: #e0e0e0;
+    --primary: #1D9E75;
+    --input-bg: #2d2d2d;
+    --border: #444;
+  }
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .chat-header {
+    background: #111;
+    padding: 12px 16px;
+    font-weight: 600;
+    font-size: 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    -webkit-app-region: drag;
+  }
+  .close-btn {
+    -webkit-app-region: no-drag;
+    cursor: pointer;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 16px;
+  }
+  .chat-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .message {
+    max-width: 85%;
+    padding: 10px 14px;
+    border-radius: 8px;
+    line-height: 1.5;
+    font-size: 14px;
+    word-wrap: break-word;
+  }
+  .message.user {
+    align-self: flex-end;
+    background: var(--primary);
+    color: #fff;
+    border-bottom-right-radius: 2px;
+  }
+  .message.ai {
+    align-self: flex-start;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 2px;
+  }
+  .message pre {
+    background: #000;
+    padding: 8px;
+    border-radius: 4px;
+    overflow-x: auto;
+  }
+  .message code {
+    font-family: monospace;
+    font-size: 13px;
+    background: rgba(0,0,0,0.3);
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+  .message pre code {
+    background: none;
+    padding: 0;
+  }
+  .input-area {
+    padding: 16px;
+    background: #111;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .mic-btn {
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 50%;
+    transition: background 0.2s;
+  }
+  .mic-btn:hover {
+    background: rgba(255,255,255,0.1);
+  }
+  .mic-btn.recording {
+    color: #ff4757;
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+  }
+  textarea {
+    flex: 1;
+    background: var(--input-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    font-family: inherit;
+    font-size: 14px;
+    resize: none;
+    height: 24px;
+    min-height: 24px;
+    max-height: 120px;
+    outline: none;
+  }
+  textarea:focus {
+    border-color: var(--primary);
+  }
+  button.send-btn {
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 0 16px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button.send-btn:hover {
+    background: #15805e;
+  }
+  .cursor {
+    display: inline-block;
+    width: 6px;
+    height: 14px;
+    background: var(--primary);
+    animation: blink 1s step-end infinite;
+    vertical-align: middle;
+    margin-left: 2px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+</style>
+</head>
+<body>
+
+<div class="chat-header">
+  <span>⚡ Test AI Chat</span>
+  <button class="close-btn" onclick="window.close()">×</button>
+</div>
+
+<div class="chat-container" id="chat">
+  <div class="message ai">Hello! I am ready to test. Type a question below.</div>
+</div>
+
+<div class="input-area">
+  <button class="mic-btn" id="micBtn" title="Click to speak">🎤</button>
+  <button id="followUpBtnTest" onclick="toggleFollowUpTest()" style="background:none; border:1px solid var(--border); color:var(--text); font-size:11px; padding:4px 8px; border-radius:6px; cursor:pointer; font-family:inherit; white-space:nowrap;" title="Flag next message as follow-up">🔁 Follow-up: OFF</button>
+  <textarea id="msgInput" placeholder="Type or speak your message... (Shift+Enter for newline)"></textarea>
+  <button class="send-btn" id="sendBtn">Send</button>
+</div>
+
+<script>
+const { ipcRenderer } = require('electron');
+
+const chat = document.getElementById('chat');
+const input = document.getElementById('msgInput');
+const sendBtn = document.getElementById('sendBtn');
+
+let currentAIMessage = null;
+let currentAIContent = '';
+
+function getAudioConstraints(baseConstraints = {}) {
+  const savedMic = localStorage.getItem('selectedMicId');
+  const base = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, ...baseConstraints };
+  if (!savedMic) return base;
+  return { ...base, deviceId: { ideal: savedMic } };
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderMarkdown(md) {
+  if (!md) return '';
+  
+  // Extract code blocks first to protect them
+  const codeBlocks = [];
+  let processed = md.replace(/```([\s\S]*?)```/g, (match, code) => {
+    codeBlocks.push('<pre><code>' + escapeHtml(code) + '</code></pre>');
+    return '%%CODEBLOCK' + (codeBlocks.length - 1) + '%%';
+  });
+  
+  // Escape HTML in remaining text
+  processed = escapeHtml(processed);
+  
+  // Restore code blocks
+  codeBlocks.forEach((block, i) => {
+    processed = processed.replace('%%CODEBLOCK' + i + '%%', block);
+  });
+  
+  // Split into lines and process each
+  const lines = processed.split('\n');
+  let html = '';
+  let inList = false;
+  
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    
+    // Bold
+    line = line.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    // Italic
+    line = line.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    // Inline code
+    line = line.replace(/`([^`]+)`/g, '<code>$1</code>');
+    
+    const trimmed = line.trim();
+    
+    // Headers
+    if (trimmed.startsWith('### ')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="font-weight:700;margin:8px 0 4px;color:#1D9E75;">' + trimmed.slice(4) + '</div>';
+    } else if (trimmed.startsWith('## ')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="font-weight:700;margin:10px 0 4px;color:#1D9E75;font-size:15px;">' + trimmed.slice(3) + '</div>';
+    }
+    // Bullet points (- or * or •)
+    else if (/^[-*•]\s/.test(trimmed)) {
+      if (!inList) { html += '<ul style="margin:4px 0;padding-left:18px;">'; inList = true; }
+      html += '<li style="margin:3px 0;">' + trimmed.replace(/^[-*•]\s+/, '') + '</li>';
+    }
+    // Numbered lists
+    else if (/^\d+[\.\)]\s/.test(trimmed)) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="margin:3px 0;padding-left:4px;">' + trimmed + '</div>';
+    }
+    // Code blocks (already protected)
+    else if (trimmed.startsWith('<pre>')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += line;
+    }
+    // Empty lines
+    else if (trimmed === '') {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="height:6px;"></div>';
+    }
+    // Regular text
+    else {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="margin:2px 0;">' + line + '</div>';
+    }
+  }
+  if (inList) html += '</ul>';
+  
+  return html;
+}
+
+function scrollToBottom() {
+  chat.scrollTop = chat.scrollHeight;
+}
+
+let isFollowUpTest = false;
+function toggleFollowUpTest() {
+  isFollowUpTest = !isFollowUpTest;
+  const btn = document.getElementById('followUpBtnTest');
+  if (btn) {
+    btn.textContent = isFollowUpTest ? '🔁 Follow-up: ON' : '🔁 Follow-up: OFF';
+    btn.style.color = isFollowUpTest ? '#1D9E75' : 'var(--text)';
+    btn.style.borderColor = isFollowUpTest ? '#1D9E75' : 'var(--border)';
+    btn.style.background = isFollowUpTest ? 'rgba(29,158,117,0.15)' : 'none';
+  }
+}
+
+function sendMessage() {
+  let text = input.value.trim();
+  if (!text) return;
+  
+  if (isFollowUpTest && !text.startsWith('[FOLLOW-UP QUESTION]') && !text.startsWith('[FOLLOW-UP')) {
+    text = '[FOLLOW-UP QUESTION]: ' + text;
+    toggleFollowUpTest();
+  }
+  
+  // Add user message
+  const uMsg = document.createElement('div');
+  uMsg.className = 'message user';
+  uMsg.textContent = text;
+  chat.appendChild(uMsg);
+  
+  // Clear input
+  input.value = '';
+  input.style.height = '24px';
+  scrollToBottom();
+  
+  // Prepare AI bubble
+  currentAIMessage = document.createElement('div');
+  currentAIMessage.className = 'message ai';
+  currentAIMessage.innerHTML = '<span class="cursor"></span>';
+  chat.appendChild(currentAIMessage);
+  scrollToBottom();
+  currentAIContent = '';
+  
+  // Send IPC
+  ipcRenderer.send('test-ai-request', text);
+}
+
+sendBtn.addEventListener('click', sendMessage);
+
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+input.addEventListener('input', function() {
+  this.style.height = '24px';
+  this.style.height = (this.scrollHeight - 20) + 'px';
+});
+
+ipcRenderer.on('test-ai-chunk', (_, chunk) => {
+  if (!currentAIMessage) return;
+  currentAIContent += chunk;
+  currentAIMessage.innerHTML = renderMarkdown(currentAIContent) + '<span class="cursor"></span>';
+  scrollToBottom();
+});
+
+ipcRenderer.on('test-ai-done', () => {
+  if (!currentAIMessage) return;
+  currentAIMessage.innerHTML = renderMarkdown(currentAIContent);
+  currentAIMessage = null;
+});
+
+ipcRenderer.on('test-ai-error', (_, err) => {
+  if (currentAIMessage) {
+    currentAIMessage.innerHTML = `<span style="color:#ff6b6b">Error: ${escapeHtml(err)}</span>`;
+    currentAIMessage = null;
+  }
+});
+
+// Voice Input Logic
+const micBtn = document.getElementById('micBtn');
+let isRecording = false;
+let dgSocket = null;
+let mediaRecorder = null;
+let micStream = null;
+let fallbackRecognition = null;
+
+if ('webkitSpeechRecognition' in window) {
+  fallbackRecognition = new webkitSpeechRecognition();
+  fallbackRecognition.continuous = true;
+  fallbackRecognition.interimResults = true;
+  fallbackRecognition.onstart = () => { isRecording = true; micBtn.classList.add('recording'); input.placeholder = "Listening (Fallback)..."; };
+  fallbackRecognition.onresult = (event) => {
+    let interimTranscript = '';
+    let finalTranscript = '';
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
+      else interimTranscript += event.results[i][0].transcript;
+    }
+    if (finalTranscript) { input.value = (input.value + ' ' + finalTranscript).trim(); sendMessage(); }
+    else { input.value = interimTranscript; }
+  };
+  fallbackRecognition.onerror = (e) => { console.error("Speech error", e.error); stopRecording(); };
+  fallbackRecognition.onend = () => stopRecording();
+}
+
+async function transcribeWhisper(blob, apiKey, isZai) {
+  if (blob.size < 2000) return null;
+  const formData = new FormData();
+  formData.append('file', blob, 'audio.webm');
+  formData.append('model', isZai ? 'FunAudioLLM/SenseVoiceSmall' : 'whisper-large-v3');
+  const endpoint = isZai ? 'https://api.z.ai/v1/audio/transcriptions' : 'https://api.groq.com/openai/v1/audio/transcriptions';
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+      body: formData
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data.text;
+  } catch(e) {
+    console.error(e);
+    return null;
+  }
+}
+
+async function startWhisper(apiKey, isZai) {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioConstraints({ noiseSuppression: true, echoCancellation: true }), video: false });
+    isRecording = true;
+    micBtn.classList.add('recording');
+    input.placeholder = isZai ? "Z.AI Listening..." : "Grok Whisper Listening...";
+    
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+    
+    function recordChunk() {
+      if (!isRecording) return;
+      mediaRecorder = new MediaRecorder(micStream, { mimeType });
+      mediaRecorder.ondataavailable = async e => {
+        if (!isRecording) return;
+        if (e.data.size > 2000) {
+          const text = await transcribeWhisper(e.data, apiKey, isZai);
+          if (text) {
+             input.value = (input.value + ' ' + text).trim();
+          }
+        }
+      };
+      mediaRecorder.start();
+      setTimeout(() => {
+        if (isRecording && mediaRecorder.state !== 'inactive') {
+          mediaRecorder.stop();
+          recordChunk();
+        }
+      }, 5000);
+    }
+    recordChunk();
+  } catch(e) {
+    alert("Microphone error: " + e.message);
+    stopRecording();
+  }
+}
+
+async function startDeepgram(dgKey) {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioConstraints({ noiseSuppression: true, echoCancellation: true }), video: false });
+    const wsUrl = 'wss://api.deepgram.com/v1/listen?model=nova-3&language=en&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000';
+    dgSocket = new WebSocket(wsUrl, ['token', dgKey]);
+    
+    dgSocket.onopen = () => {
+      isRecording = true;
+      micBtn.classList.add('recording');
+      input.placeholder = "Deepgram Listening...";
+      input.value = '';
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+      mediaRecorder = new MediaRecorder(micStream, { mimeType });
+      mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0 && dgSocket?.readyState === WebSocket.OPEN) {
+          dgSocket.send(e.data);
+        }
+      };
+      mediaRecorder.start(250);
+    };
+
+    let currentSentence = '';
+    dgSocket.onmessage = (msg) => {
+      const data = JSON.parse(msg.data);
+      if (data.type === 'UtteranceEnd') {
+        if (currentSentence.length > 2) {
+          input.value = currentSentence;
+          sendMessage();
+          currentSentence = '';
+        }
+        return;
+      }
+      const alt = data?.channel?.alternatives?.[0];
+      if (!alt) return;
+      const transcript = alt.transcript?.trim();
+      if (data.is_final && transcript) {
+        currentSentence += (currentSentence ? ' ' : '') + transcript;
+        input.value = currentSentence;
+        if (data.speech_final) {
+          sendMessage();
+          currentSentence = '';
+        }
+      } else if (!data.is_final && transcript) {
+        input.value = currentSentence ? currentSentence + ' ' + transcript : transcript;
+      }
+    };
+    dgSocket.onerror = (e) => {
+      alert("Deepgram socket error.");
+      stopRecording();
+    };
+    dgSocket.onclose = (e) => {
+      if (isRecording && e.code !== 1000) {
+        alert("Deepgram disconnected (code " + e.code + "). Check your API key.");
+      }
+      stopRecording();
+    };
+  } catch (err) {
+    alert("Microphone error: " + err.message);
+    stopRecording();
+  }
+}
+
+function stopRecording() {
+  if (!isRecording) return;
+  isRecording = false;
+  micBtn.classList.remove('recording');
+  input.placeholder = "Type or speak your message... (Shift+Enter for newline)";
+  if (fallbackRecognition) {
+    try { fallbackRecognition.stop(); } catch(e){}
+  }
+  if (dgSocket) {
+    dgSocket.close();
+    dgSocket = null;
+  }
+  if (mediaRecorder) {
+    mediaRecorder.stop();
+    mediaRecorder = null;
+  }
+  if (micStream) {
+    micStream.getTracks().forEach(t => t.stop());
+    micStream = null;
+  }
+}
+
+micBtn.addEventListener('click', async () => {
+  if (isRecording) {
+    stopRecording();
+    return;
+  }
+  
+  try {
+    const settings = await ipcRenderer.invoke('get-settings');
+    const dgKey = settings?.deepgramApiKey;
+    
+    if (dgKey) {
+      startDeepgram(dgKey);
+    } else if (settings?.apiKeys?.grok || settings?.apiKeys?.zai || settings?.apiKeys?.chatgpt || settings?.apiKeys?.deepseek) {
+      const isZai = !!settings?.apiKeys?.zai && !settings?.apiKeys?.grok;
+      const fallbackKey = settings?.apiKeys?.grok || settings?.apiKeys?.zai || settings?.apiKeys?.chatgpt || settings?.apiKeys?.deepseek;
+      startWhisper(fallbackKey, isZai);
+    } else if (fallbackRecognition) {
+      try {
+        await navigator.mediaDevices.getUserMedia({ audio: getAudioConstraints(), video: false });
+      } catch (e) {
+        alert("Mic permission denied: " + e.message);
+        return;
+      }
+      input.value = '';
+      fallbackRecognition.start();
+    } else {
+      alert("No Deepgram API key found, and built-in speech recognition is not supported.");
+    }
+  } catch (err) {
+    alert("IPC Error: " + err.message);
+  }
+});
+</script>
+</body>
+</html>
