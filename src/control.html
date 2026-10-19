@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
@@ -342,7 +342,27 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
               <span style="font-size:10px; color:var(--text3);">1.5 (Creative)</span>
             </div>
             <div id="tempHintText" style="font-size:10px; color:var(--text3); margin-top:4px; line-height:1.3;">
-              DeepSeek 4.1 Flash: Supports 0.0 to 2.0. Recommended 0.30 for deterministic Apex code.
+              DeepSeek 4.1 Flash (1017): Supports 0.0 to 2.0. Recommended 0.30 for deterministic Apex code.
+            </div>
+          </div>
+
+          <!-- DeepSeek Web Search & Fetch (Live Docs) -->
+          <div id="deepseekWebSearchRow" style="margin-top:10px; padding-top:8px; border-top:1px solid var(--border); display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-size:11px; font-weight:600; color:var(--text2);">🌐 Live Web Search & Fetch</span>
+                <span id="deepseekWebBadge" style="font-size:9px; font-weight:700; color:var(--accent); background:rgba(0,200,150,0.12); padding:1px 5px; border-radius:3px;">ACTIVE</span>
+              </div>
+              <label style="cursor:pointer; display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text1);">
+                <input type="checkbox" id="deepseekWebSearchToggle" style="accent-color:var(--accent); width:14px; height:14px;" onchange="handleDeepseekWebSearchToggle(this.checked)" checked>
+                <span>Enable</span>
+              </label>
+            </div>
+            <div style="font-size:10px; color:var(--text3); margin-top:3px; line-height:1.3;">
+              Auto-queries DeepSeek's native Search API (<code style="color:var(--accent);">/tools/search</code>) & Fetch API (<code style="color:var(--accent);">/tools/fetch</code>) for live technical docs and release updates.
+            </div>
+            <div style="margin-top:6px; display:flex; gap:6px;">
+              <button type="button" class="btn-sm" style="font-size:10px; padding:3px 8px;" onclick="openDeepseekWebSearchModal()">🔍 Test Search / Fetch</button>
             </div>
           </div>
         </div>
@@ -648,7 +668,7 @@ const PROVIDERS = {
     placeholder: 'sk-...',
     hint: 'Get yours at platform.deepseek.com · Stored locally only.',
     apiBase: 'https://api.deepseek.com/v1',
-    model: 'deepseek-chat',
+    model: 'deepseek-flash',
   }
 };
 
@@ -1001,6 +1021,33 @@ function updateModelTuningUI() {
     if (tempSlider) { tempSlider.disabled = false; tempSlider.style.opacity = '1'; }
     if (tempHint) tempHint.textContent = 'Recommended: 0.20 – 0.30 for strict, deterministic Salesforce technical answers.';
   }
+
+  // Toggle DeepSeek Web Search row
+  const deepseekWebRow = $('deepseekWebSearchRow');
+  if (deepseekWebRow) {
+    deepseekWebRow.style.display = (prov === 'deepseek') ? 'block' : 'none';
+    const toggle = $('deepseekWebSearchToggle');
+    const badge = $('deepseekWebBadge');
+    const isSearchActive = (window.deepseekWebSearchEnabled !== false);
+    if (toggle) toggle.checked = isSearchActive;
+    if (badge) {
+      badge.textContent = isSearchActive ? 'ACTIVE' : 'OFF';
+      badge.style.color = isSearchActive ? 'var(--accent)' : 'var(--text3)';
+      badge.style.background = isSearchActive ? 'rgba(0,200,150,0.12)' : 'rgba(255,255,255,0.05)';
+    }
+  }
+}
+
+function handleDeepseekWebSearchToggle(enabled) {
+  window.deepseekWebSearchEnabled = !!enabled;
+  saveS({ deepseekWebSearch: window.deepseekWebSearchEnabled });
+  const badge = $('deepseekWebBadge');
+  if (badge) {
+    badge.textContent = enabled ? 'ACTIVE' : 'OFF';
+    badge.style.color = enabled ? 'var(--accent)' : 'var(--text3)';
+    badge.style.background = enabled ? 'rgba(0,200,150,0.12)' : 'rgba(255,255,255,0.05)';
+  }
+  setStatus(`DeepSeek Live Web Search & Fetch: ${enabled ? 'ENABLED' : 'DISABLED'}`);
 }
 
 function populateAiModels(provider) {
@@ -1058,12 +1105,14 @@ function populateAiModels(provider) {
   
   } else if (provider === 'deepseek') {
     models = [
-      { id: 'deepseek-chat', label: 'DeepSeek V4.1 Flash (deepseek-chat)' },
-      { id: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
+      { id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash (V4.1-Flash-1017 · Latest)' },
+      { id: 'deepseek-chat', label: 'DeepSeek V4.1 Flash (deepseek-chat alias)' },
+      { id: 'deepseek-v4.1-flash-1017', label: 'DeepSeek V4.1 Flash (1017 Snapshot)' },
+      { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (High-Capacity Flagship)' },
       { id: 'deepseek-reasoner', label: 'DeepSeek Reasoner' }
     ];
     if (!models.map(m => m.id).includes(PROVIDERS.deepseek.model)) {
-      PROVIDERS.deepseek.model = 'deepseek-chat';
+      PROVIDERS.deepseek.model = 'deepseek-flash';
     }
   }
 
@@ -1208,6 +1257,12 @@ async function mockAskQuestion(question, isTest = false) {
     window.currentReasoningEffort = s.reasoningEffort || s.lunaReasoningEffort;
   } else {
     window.currentReasoningEffort = 'none';
+  }
+
+  if (s.deepseekWebSearch !== undefined) {
+    window.deepseekWebSearchEnabled = !!s.deepseekWebSearch;
+  } else {
+    window.deepseekWebSearchEnabled = true;
   }
 
   if (s.provider && s.provider !== 'deepgram' && s.provider !== 'claude' && s.provider !== 'tokenharbor') {
@@ -3290,6 +3345,38 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
           }
         }
 
+        // ── 🌐 DEEPSEEK LIVE WEB SEARCH & FETCH AUGMENTATION ──
+        if (effectiveProvider === 'deepseek' && window.deepseekWebSearchEnabled && effectiveKey) {
+          try {
+            const urlMatch = question.match(/https?:\/\/[^\s"'<>]+/i);
+            if (urlMatch) {
+              setStatus('🌐 DeepSeek Fetching webpage content…');
+              const fetchedContent = await fetchDeepseekWeb(urlMatch[0], effectiveKey);
+              if (fetchedContent && sanitizedMessages.length > 0) {
+                const lastMsg = sanitizedMessages[sanitizedMessages.length - 1];
+                if (lastMsg && lastMsg.role === 'user' && typeof lastMsg.content === 'string') {
+                  lastMsg.content = `[LIVE WEB FETCH CONTENT via DeepSeek (/tools/fetch) for ${urlMatch[0]}]:\n${fetchedContent.slice(0, 3500)}\n\n${lastMsg.content}`;
+                }
+              }
+            } else {
+              // Pre-query live search via DeepSeek Search API
+              setStatus('🌐 DeepSeek Web Search retrieving live technical docs…');
+              const searchResults = await searchDeepseekWeb(question, effectiveKey, 3);
+              if (searchResults && searchResults.length > 0 && sanitizedMessages.length > 0) {
+                const searchContext = searchResults.map((r, i) => 
+                  `Source ${i + 1}: ${r.title} (${r.url})\nSummary: ${r.summary || r.snippet || ''}`
+                ).join('\n\n');
+                const lastMsg = sanitizedMessages[sanitizedMessages.length - 1];
+                if (lastMsg && lastMsg.role === 'user' && typeof lastMsg.content === 'string') {
+                  lastMsg.content = `[LIVE WEB SEARCH CONTEXT via DeepSeek (/tools/search)]:\n${searchContext}\n\n${lastMsg.content}`;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('[DeepSeek Web Search/Fetch failed gracefully]:', e.message);
+          }
+        }
+
         const maxTokensBudget = effectiveProvider === 'groq' ? 2800 : 4096;
 
         const requestBody = {
@@ -3336,8 +3423,15 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
             delete requestBody.temperature;
           }
         } else if (effectiveProvider === 'deepseek') {
+          // Normalize model ID to official DeepSeek API endpoints:
+          // 'deepseek-flash' is the official ID for DeepSeek-V4.1-Flash (including V4.1-Flash-1017)
+          if (currentModel === 'deepseek-v4.1-flash-1017' || currentModel === 'deepseek-v4.1-flash' || currentModel === 'deepseek-chat') {
+            requestBody.model = 'deepseek-flash';
+          } else if (currentModel === 'deepseek-reasoner') {
+            requestBody.model = 'deepseek-v4-pro';
+          }
           requestBody.max_tokens = maxTokensBudget;
-          if (currentModel.includes('reasoner')) {
+          if (currentModel.includes('reasoner') || currentModel === 'deepseek-v4-pro') {
             delete requestBody.temperature;
           } else if (activeEffort === 'none') {
             // Option A: Fast Mode (Standard clean payload without extra thinking wrappers)
@@ -3727,6 +3821,141 @@ ipcRenderer.on('process-screenshot', (_, data) => {
   askQuestion('Please solve the coding problem shown on this screen.', base64Image);
 });
 
+// ── 🌐 DEEPSEEK TOOLS API: SEARCH & FETCH ENGINE ──
+async function searchDeepseekWeb(query, apiKey, count = 3) {
+  try {
+    const res = await fetch('https://api.deepseek.com/v1/tools/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + apiKey
+      },
+      body: JSON.stringify({ query: query.slice(0, 128), count, need_content: false })
+    });
+    if (!res.ok) {
+      console.warn('[DeepSeek Search API HTTP ' + res.status + ']');
+      return null;
+    }
+    const data = await res.json();
+    return data.results || [];
+  } catch (e) {
+    console.warn('[DeepSeek Search Exception]:', e.message);
+    return null;
+  }
+}
+
+async function fetchDeepseekWeb(url, apiKey) {
+  try {
+    const res = await fetch('https://api.deepseek.com/v1/tools/fetch', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + apiKey
+      },
+      body: JSON.stringify({ url })
+    });
+    if (!res.ok) {
+      console.warn('[DeepSeek Fetch API HTTP ' + res.status + ']');
+      return null;
+    }
+    const data = await res.json();
+    return data.content || '';
+  } catch (e) {
+    console.warn('[DeepSeek Fetch Exception]:', e.message);
+    return null;
+  }
+}
+
+let lastDeepseekToolResultText = '';
+
+function openDeepseekWebSearchModal() {
+  const modal = $('deepseekWebModal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeDeepseekWebSearchModal() {
+  const modal = $('deepseekWebModal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function executeDeepseekToolTest() {
+  const mode = $('deepseekToolMode').value;
+  const input = $('deepseekToolInput').value.trim();
+  const out = $('deepseekToolOutput');
+  const pinBtn = $('deepseekToolPinBtn');
+  const btn = $('deepseekToolRunBtn');
+  
+  if (!input) {
+    out.textContent = 'Please enter a search query or URL.';
+    return;
+  }
+  
+  const key = (PROVIDERS.deepseek && PROVIDERS.deepseek.apiKey) || 
+              (envConfig.savedApiKeys && envConfig.savedApiKeys.deepseek) || 
+              (window._rawSettings && window._rawSettings.apiKeys && window._rawSettings.apiKeys.deepseek) || 
+              $('apiKey').value.trim();
+              
+  if (!key) {
+    out.textContent = '❌ Error: No DeepSeek API Key found. Please enter your key in the Control Panel first.';
+    return;
+  }
+  
+  btn.disabled = true;
+  btn.textContent = 'Fetching…';
+  out.textContent = `Connecting to DeepSeek ${mode === 'search' ? '/tools/search' : '/tools/fetch'}…`;
+  
+  try {
+    if (mode === 'search') {
+      const results = await searchDeepseekWeb(input, key, 5);
+      if (!results || results.length === 0) {
+        out.textContent = 'No search results found.';
+        pinBtn.style.display = 'none';
+      } else {
+        let text = `Found ${results.length} ranked results via DeepSeek Search Engine:\n\n`;
+        results.forEach((r, i) => {
+          text += `[${i + 1}] ${r.title}\n`;
+          text += `URL: ${r.url}\n`;
+          text += `Date: ${r.date || 'Recent'} | Authority: ${r.authority || 'N/A'}\n`;
+          text += `${r.summary || r.snippet || 'No summary available.'}\n\n`;
+          text += '─'.repeat(40) + '\n\n';
+        });
+        out.textContent = text;
+        lastDeepseekToolResultText = `[DEEPSEEK SEARCH: "${input}"]\n` + text;
+        pinBtn.style.display = 'inline-block';
+      }
+    } else {
+      let targetUrl = input;
+      if (!targetUrl.startsWith('http')) targetUrl = 'https://' + targetUrl;
+      const content = await fetchDeepseekWeb(targetUrl, key);
+      if (!content) {
+        out.textContent = '❌ Failed to fetch webpage content or page returned empty.';
+        pinBtn.style.display = 'none';
+      } else {
+        out.textContent = content;
+        lastDeepseekToolResultText = `[DEEPSEEK FETCH: ${targetUrl}]\n` + content;
+        pinBtn.style.display = 'inline-block';
+      }
+    }
+  } catch (err) {
+    out.textContent = '❌ Error: ' + err.message;
+    pinBtn.style.display = 'none';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Execute';
+  }
+}
+
+function pinDeepseekResultToContext() {
+  if (!lastDeepseekToolResultText) return;
+  const currentRef = $('jdKeywords')?.value || '';
+  if ($('jdKeywords')) {
+    $('jdKeywords').value = (currentRef ? currentRef + '\n\n' : '') + lastDeepseekToolResultText.slice(0, 4000);
+    saveS({ jdKeywords: $('jdKeywords').value });
+  }
+  setStatus('📌 Web content pinned to Interview Technical Reference!');
+  closeDeepseekWebSearchModal();
+}
+
 </script>
 
 <div class="prompt-preview" id="sessionViewerModal" style="display:none;z-index:9999;">
@@ -3744,6 +3973,35 @@ ipcRenderer.on('process-screenshot', (_, data) => {
       <button class="btn-secondary" onclick="ipcRenderer.send('open-screenshots-folder')">📁 Open Screenshots Folder</button>
       <button class="btn-secondary" onclick="document.getElementById('sessionViewerModal').style.display='none'">Close</button>
       <button class="btn-primary" id="downloadSessionBtn">⬇ Download PDF</button>
+    </div>
+  </div>
+</div>
+
+<div class="prompt-preview" id="deepseekWebModal" style="display:none;z-index:9999;">
+  <div class="prompt-card" style="width:750px; max-width:92vw;">
+    <div class="prompt-head">
+      <div>
+        <div class="prompt-title">🌐 DeepSeek Live Web Search & Fetch</div>
+        <div class="hint">Query DeepSeek's native Search API (<code style="color:var(--accent);">/tools/search</code>) & Fetch API (<code style="color:var(--accent);">/tools/fetch</code>)</div>
+      </div>
+      <button class="btn-sm" onclick="closeDeepseekWebSearchModal()" style="margin-left:auto;">✕</button>
+    </div>
+    <div class="prompt-body" style="background:var(--bg3); padding:15px; border-radius:6px; color:var(--text1);">
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <select id="deepseekToolMode" style="width:130px; font-size:12px; font-weight:600; padding:6px;">
+          <option value="search">🔍 Search Web</option>
+          <option value="fetch">📄 Fetch URL</option>
+        </select>
+        <input type="text" id="deepseekToolInput" style="flex:1; padding:7px 10px; font-size:12px;" placeholder="Search topic or paste https:// URL..." onkeydown="if(event.key==='Enter') executeDeepseekToolTest();" />
+        <button class="btn-primary" id="deepseekToolRunBtn" style="padding:6px 16px; font-size:12px;" onclick="executeDeepseekToolTest()">Execute</button>
+      </div>
+      <div id="deepseekToolOutput" style="white-space: pre-wrap; font-size:12px; line-height:1.5; max-height:45vh; overflow-y:auto; background:var(--bg2); padding:10px; border-radius:4px; border:1px solid var(--border); user-select:text;">
+Enter a search query (e.g. "Salesforce Spring 26 release notes") or a URL (e.g. "https://developer.salesforce.com") and click Execute to test live DeepSeek tools.
+      </div>
+    </div>
+    <div class="prompt-actions" style="display:flex; justify-content:space-between; align-items:center;">
+      <button class="btn-secondary" id="deepseekToolPinBtn" style="display:none;" onclick="pinDeepseekResultToContext()">📌 Pin to Interview Reference</button>
+      <button class="btn-secondary" onclick="closeDeepseekWebSearchModal()" style="margin-left:auto;">Close</button>
     </div>
   </div>
 </div>
