@@ -337,7 +337,10 @@ strong { font-weight:600; color:var(--accent); }
     <span class="hint-text" id="qCount">0 Q&amp;As</span>
     <div class="hint-keys">
       <button class="mic-toggle-btn" id="overlayMicBtn" onclick="toggleMic()">🎤 Mic: ON</button>
-      <button class="capture-btn" id="overlayCaptureBtn" onclick="captureScreen()">📸 Screen</button>
+      <button class="capture-btn" id="overlayCaptureBtn" onclick="captureScreen()" title="Single-shot capture (instant answer)">📸 Screen</button>
+      <button class="capture-btn" id="multiCaptureBtn" onclick="captureMultiPart()" title="Add screenshot part (scroll and capture multiple parts)">📸+ Part</button>
+      <button class="capture-btn" id="solveMultiBtn" onclick="solveMultiParts()" style="display:none; background: #16a34a; border-color: #22c55e; color: #fff; font-weight: bold;" title="Send all captured parts to AI">⚡ Solve (0)</button>
+      <button class="capture-btn" id="clearMultiBtn" onclick="clearMultiParts()" style="display:none; color: #ef4444; padding: 2px 6px;" title="Discard queued screenshot parts">✕</button>
       <button class="capture-btn" id="overlayFollowUpBtn" onclick="toggleFollowUpOverlay()">🔁 Follow-up: OFF</button>
       <button class="capture-btn" id="longQBtn" onclick="toggleLongQ()">⏱ Long Q: OFF</button>
       <button class="capture-btn" id="autoScrollBtn" onclick="toggleAutoScroll()" title="Toggle Auto Scroll">⏬ Scroll: ON</button>
@@ -404,6 +407,16 @@ window.addEventListener('keydown', (e) => {
       sel.selectedIndex = (sel.selectedIndex + 1) % sel.options.length;
       changeOverlayModel(sel.value);
     }
+  } else if (e.altKey && (e.key === 'p' || e.key === 'P')) {
+    e.preventDefault();
+    captureMultiPart();
+  } else if (e.altKey && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault();
+    if (typeof multiPartQueue !== 'undefined' && multiPartQueue.length > 0) {
+      solveMultiParts();
+    } else {
+      captureScreen();
+    }
   }
 });
 let cursor = null;
@@ -469,6 +482,52 @@ function toggleFollowUpOverlay() { ipcRenderer.send('toggle-followup-from-overla
 function captureScreen() { 
   $('st').textContent = 'Capturing screen...';
   ipcRenderer.send('capture-screen');
+}
+
+let multiPartQueue = [];
+
+function captureMultiPart() {
+  $('st').textContent = `Capturing Part ${multiPartQueue.length + 1}…`;
+  ipcRenderer.send('capture-screen', { isMultiPart: true });
+}
+
+ipcRenderer.on('screenshot-part-captured', (_, data) => {
+  multiPartQueue.push(data);
+  const count = multiPartQueue.length;
+  showOverlayToast(`📸 Part ${count} Saved! Scroll & click '📸+ Part' or '⚡ Solve'`);
+  
+  const solveBtn = $('solveMultiBtn');
+  const clearBtn = $('clearMultiBtn');
+  const partBtn = $('multiCaptureBtn');
+  
+  if (solveBtn) {
+    solveBtn.style.display = 'inline-block';
+    solveBtn.textContent = `⚡ Solve (${count} Part${count > 1 ? 's' : ''})`;
+  }
+  if (clearBtn) {
+    clearBtn.style.display = 'inline-block';
+  }
+  if (partBtn) {
+    partBtn.textContent = `📸+ Part ${count + 1}`;
+  }
+});
+
+function solveMultiParts() {
+  if (multiPartQueue.length === 0) return;
+  const count = multiPartQueue.length;
+  showOverlayToast(`🧠 Solving ${count}-Part Problem…`);
+  ipcRenderer.send('process-multi-screenshot', multiPartQueue);
+  clearMultiParts();
+}
+
+function clearMultiParts() {
+  multiPartQueue = [];
+  const solveBtn = $('solveMultiBtn');
+  const clearBtn = $('clearMultiBtn');
+  const partBtn = $('multiCaptureBtn');
+  if (solveBtn) solveBtn.style.display = 'none';
+  if (clearBtn) clearBtn.style.display = 'none';
+  if (partBtn) partBtn.textContent = '📸+ Part';
 }
 
 ipcRenderer.on('focus-followup-input', () => {

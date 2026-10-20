@@ -3272,23 +3272,32 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
       const cleanQ = question.replace('[FOLLOW-UP QUESTION]: ', '');
       historyMessages.push({ role: 'user', content: `Interviewer's current question/request (maintaining context with the preceding discussion above): "${cleanQ}"` });
     } else if (imageBase64) {
+      const images = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
       if (['zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
+        const contentParts = [
+          { type: 'text', text: images.length > 1 
+              ? `This is a single complete coding problem captured across ${images.length} sequential vertical screenshots of the problem statement, constraints, and test cases. Please analyze all parts as ONE cohesive problem and generate the complete, optimal, compile-consistent, edge-case-safe solution with Big-O time and space complexity.`
+              : `Interviewer's question/screen: "${question}"` }
+        ];
+        images.forEach(img => {
+          contentParts.push({ type: 'image_url', image_url: { url: img } });
+        });
         historyMessages.push({
           role: 'user',
-          content: [
-            { type: 'text', text: `Interviewer's question/screen: "${question}"` },
-            { type: 'image_url', image_url: { url: imageBase64 } }
-          ]
+          content: contentParts
         });
       } else {
-        const [prefix, data] = imageBase64.split(',');
-        const mime = prefix.split(':')[1].split(';')[0];
+        const contentParts = [
+          { type: 'text', text: `Interviewer's question/screen: "${question}"` }
+        ];
+        images.forEach(img => {
+          const [prefix, data] = img.split(',');
+          const mime = prefix ? prefix.split(':')[1]?.split(';')[0] : 'image/jpeg';
+          contentParts.unshift({ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: data || '' } });
+        });
         historyMessages.push({
           role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: mime, data: data } },
-            { type: 'text', text: `Interviewer's question/screen: "${question}"` }
-          ]
+          content: contentParts
         });
       }
     } else {
@@ -3666,9 +3675,12 @@ function viewSession(i) {
         html += `<div style="color:#f59e0b; margin-bottom:5px; background:rgba(245, 158, 11, 0.1); padding:10px; border-radius:6px 6px 0 0; border-left:3px solid #f59e0b;"><b>🎤 Interviewer:</b><br/>${esc(item.question)}</div>`;
       }
       if (item.screenshot) {
-        html += `<div style="margin:-2px 0 8px 0; background:rgba(16,185,129,0.08); padding:6px 10px; border-radius:4px; font-size:12px; display:flex; align-items:center; justify-content:space-between;">
-          <span style="color:#34d399;">📸 Captured Screen Attached</span>
-          <a href="#" onclick="require('electron').shell.openPath('${item.screenshot.replace(/\\/g, '/')}'); return false;" style="color:#60a5fa; text-decoration:underline;">View Screenshot ↗</a>
+        const paths = item.screenshot.split(';').filter(Boolean);
+        html += `<div style="margin:-2px 0 8px 0; background:rgba(16,185,129,0.08); padding:6px 10px; border-radius:4px; font-size:12px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;">
+          <span style="color:#34d399;">📸 Captured Screen (${paths.length} Part${paths.length > 1 ? 's' : ''})</span>
+          <div style="display:flex; gap:8px;">
+            ${paths.map((p, pIdx) => `<a href="#" onclick="require('electron').shell.openPath('${p.replace(/\\/g, '/')}'); return false;" style="color:#60a5fa; text-decoration:underline;">Part ${pIdx + 1} ↗</a>`).join(' ')}
+          </div>
         </div>`;
       }
       if (item.answer) {
@@ -3819,6 +3831,17 @@ ipcRenderer.on('process-screenshot', (_, data) => {
   const filename = (typeof data === 'object' && data.filename) ? data.filename : 'saved';
   setStatus(`📸 Screenshot captured & saved (${filename}) — analyzing code…`);
   askQuestion('Please solve the coding problem shown on this screen.', base64Image);
+});
+
+ipcRenderer.on('process-multi-screenshot', (_, parts) => {
+  if (!parts || parts.length === 0) return;
+  const filePaths = parts.map(p => p.filePath).filter(Boolean);
+  currentScreenshotPath = filePaths.join(';');
+  const filenames = parts.map(p => p.filename).join(', ');
+  setStatus(`📸 Multi-part screen captured (${parts.length} parts) — analyzing full coding problem…`);
+  
+  const base64List = parts.map(p => p.base64);
+  askQuestion(`Please solve this complete coding problem captured across ${parts.length} sequential screenshots of the problem statement, constraints, and test cases. Provide the optimal, compile-ready solution with Big-O analysis and edge-case handling.`, base64List);
 });
 
 // ── 🌐 DEEPSEEK TOOLS API: SEARCH & FETCH ENGINE ──

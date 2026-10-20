@@ -644,7 +644,7 @@ ipcMain.on('ask-followup', (_, q) => {
     safeSend(controlWin, 'ask-followup', q);
   });
   
-ipcMain.on('capture-screen', async () => {
+ipcMain.on('capture-screen', async (_, options = {}) => {
   try {
     const { desktopCapturer } = require('electron');
     // High-speed 1280x720 (720p HD) capture: keeps text & code 100% crisp while cutting visual token encoding overhead by 60%
@@ -661,12 +661,20 @@ ipcMain.on('capture-screen', async () => {
       fs.writeFileSync(filePath, jpegBuffer);
       console.log('[Screen Capture] Saved screenshot to:', filePath, 'Size:', Math.round(base64.length / 1024), 'KB');
 
-      safeSend(controlWin, 'process-screenshot', { base64, filePath, filename });
-      safeSend(overlayWin, 'screenshot-saved', { filePath, filename });
+      if (options && options.isMultiPart) {
+        safeSend(overlayWin, 'screenshot-part-captured', { base64, filePath, filename });
+      } else {
+        safeSend(controlWin, 'process-screenshot', { base64, filePath, filename });
+        safeSend(overlayWin, 'screenshot-saved', { filePath, filename });
+      }
     }
   } catch (err) {
     console.error('Failed to capture screen:', err);
   }
+});
+
+ipcMain.on('process-multi-screenshot', (_, parts) => {
+  safeSend(controlWin, 'process-multi-screenshot', parts);
 });
 
 ipcMain.on('open-screenshots-folder', () => {
