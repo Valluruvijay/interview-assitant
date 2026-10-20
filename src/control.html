@@ -3440,7 +3440,11 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
             requestBody.model = 'deepseek-v4-pro';
           }
           requestBody.max_tokens = maxTokensBudget;
-          if (currentModel.includes('reasoner') || currentModel === 'deepseek-v4-pro') {
+          if (currentModel.includes('reasoner')) {
+            requestBody.thinking = { type: 'enabled' };
+            requestBody.reasoning_effort = 'high';
+            delete requestBody.temperature;
+          } else if (currentModel === 'deepseek-v4-pro') {
             delete requestBody.temperature;
           } else if (activeEffort === 'none') {
             // Option A: Fast Mode (Standard clean payload without extra thinking wrappers)
