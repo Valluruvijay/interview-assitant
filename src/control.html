@@ -365,6 +365,23 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
               <button type="button" class="btn-sm" style="font-size:10px; padding:3px 8px;" onclick="openDeepseekWebSearchModal()">🔍 Test Search / Fetch</button>
             </div>
           </div>
+
+          <!-- OpenAI Responses API -->
+          <div id="chatgptResponsesRow" style="margin-top:10px; padding-top:8px; border-top:1px solid var(--border); display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-size:11px; font-weight:600; color:var(--text2);">🧩 OpenAI Responses API</span>
+                <span id="chatgptResponsesBadge" style="font-size:9px; font-weight:700; color:var(--accent); background:rgba(0,200,150,0.12); padding:1px 5px; border-radius:3px;">ACTIVE</span>
+              </div>
+              <label style="cursor:pointer; display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text1);">
+                <input type="checkbox" id="chatgptResponsesToggle" style="accent-color:var(--accent); width:14px; height:14px;" onchange="handleChatgptResponsesToggle(this.checked)" checked>
+                <span>Enable</span>
+              </label>
+            </div>
+            <div style="font-size:10px; color:var(--text3); margin-top:3px; line-height:1.3;">
+              Routes ChatGPT through <code style="color:var(--accent);">/v1/responses</code> instead of <code style="color:var(--accent);">/v1/chat/completions</code>.
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -422,14 +439,30 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
           <button class="mic-btn btn-primary" id="startInterviewBtn" onclick="startFullInterview()" style="flex:2; background:var(--accent);border-color:var(--accent);color:#fff;font-size:14px;padding:12px;">⚡ Start Interview</button>
           <button class="mic-btn btn-secondary" onclick="openTestBox()" style="flex:1; font-size:14px; padding:12px;">🧪 Test Box</button>
         </div>
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px; background:var(--bg3); padding:8px; border-radius:6px; border:1px solid var(--border);">
-           <label style="font-size:12px; font-weight:600; color:var(--text1); cursor:pointer; display:flex; align-items:center; gap:6px;">
-              <input type="checkbox" id="practiceModeToggle" style="accent-color:var(--accent); width:14px; height:14px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; background:var(--bg3); padding:8px; border-radius:6px; border:1px solid var(--border);">
+           <label style="font-size:12px; font-weight:600; color:var(--text1); cursor:pointer; display:flex; align-items:center; gap:6px; flex:1;">
+              <input type="checkbox" id="practiceModeToggle" style="accent-color:var(--accent); width:14px; height:14px;" onchange="saveS({ practiceMode: this.checked })">
               🧪 Solo Practice Mode (Mic asks questions)
            </label>
         </div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; background:var(--bg3); padding:8px; border-radius:6px; border:1px solid var(--border);">
+           <label style="font-size:12px; font-weight:600; color:var(--text1); cursor:pointer; display:flex; align-items:center; gap:6px; flex:1;">
+              <input type="checkbox" id="autoSendToggle" style="accent-color:var(--accent); width:14px; height:14px;" onchange="handleAutoSendToggle(this.checked)" checked>
+              ⚡ Auto-send questions to AI
+           </label>
+           <span class="hint" id="autoSendHint" style="font-size:10px; white-space:nowrap;">ON — answers fire automatically</span>
+        </div>
         <div class="transcript-box" id="transcript">
           <span class="t-placeholder">Transcript will appear here as you or interviewer speaks…</span>
+        </div>
+
+        <div id="pendingBar" style="display:none; margin-top:8px; padding:8px; border:1px solid rgba(239,159,39,0.45); background:rgba(239,159,39,0.10); border-radius:6px;">
+          <div style="font-size:10px; font-weight:700; color:#fbbf24; margin-bottom:4px;">⏸ QUESTION CAPTURED — NOT SENT</div>
+          <div id="pendingText" style="font-size:11px; color:var(--text); white-space:pre-wrap; max-height:70px; overflow-y:auto; margin-bottom:6px;"></div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn-primary" style="flex:1; font-size:11px; padding:6px;" onclick="sendPendingQuestion()">✋ Answer (Alt+A)</button>
+            <button class="btn-danger" style="font-size:11px; padding:6px;" onclick="discardPendingQuestion()">↩ Reject (Alt+X)</button>
+          </div>
         </div>
         
         <div id="massiveDebug" style="background:#450a0a; color:#fca5a5; padding:10px; font-family:monospace; font-size:11px; margin-top:10px; border-radius:4px; max-height:150px; overflow-y:auto; white-space:pre-wrap;">[System Diagnostics Started]...</div>
@@ -1036,6 +1069,21 @@ function updateModelTuningUI() {
       badge.style.background = isSearchActive ? 'rgba(0,200,150,0.12)' : 'rgba(255,255,255,0.05)';
     }
   }
+
+  // Toggle OpenAI Responses API row
+  const responsesRow = $('chatgptResponsesRow');
+  if (responsesRow) {
+    responsesRow.style.display = (prov === 'chatgpt') ? 'block' : 'none';
+    const toggle = $('chatgptResponsesToggle');
+    const badge = $('chatgptResponsesBadge');
+    const isResponsesActive = (window.chatgptResponsesEnabled !== false);
+    if (toggle) toggle.checked = isResponsesActive;
+    if (badge) {
+      badge.textContent = isResponsesActive ? 'ACTIVE' : 'OFF';
+      badge.style.color = isResponsesActive ? 'var(--accent)' : 'var(--text3)';
+      badge.style.background = isResponsesActive ? 'rgba(0,200,150,0.12)' : 'rgba(255,255,255,0.05)';
+    }
+  }
 }
 
 function handleDeepseekWebSearchToggle(enabled) {
@@ -1048,6 +1096,18 @@ function handleDeepseekWebSearchToggle(enabled) {
     badge.style.background = enabled ? 'rgba(0,200,150,0.12)' : 'rgba(255,255,255,0.05)';
   }
   setStatus(`DeepSeek Live Web Search & Fetch: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+}
+
+function handleChatgptResponsesToggle(enabled) {
+  window.chatgptResponsesEnabled = !!enabled;
+  saveS({ chatgptResponses: window.chatgptResponsesEnabled });
+  const badge = $('chatgptResponsesBadge');
+  if (badge) {
+    badge.textContent = enabled ? 'ACTIVE' : 'OFF';
+    badge.style.color = enabled ? 'var(--accent)' : 'var(--text3)';
+    badge.style.background = enabled ? 'rgba(0,200,150,0.12)' : 'rgba(255,255,255,0.05)';
+  }
+  setStatus(`ChatGPT Responses API: ${enabled ? 'ENABLED (/v1/responses)' : 'DISABLED (/v1/chat/completions)'}`);
 }
 
 function populateAiModels(provider) {
@@ -1086,9 +1146,6 @@ function populateAiModels(provider) {
   } else if (provider === 'groq') {
     models = [
       { id: 'qwen/qwen3.8-27b', label: 'Qwen 3.8 27B (Vision & Code)' },
-      { id: 'groq/compound', label: 'Groq Compound (Agentic)' },
-      { id: 'groq/compound-mini', label: 'Groq Compound Mini' },
-      { id: 'qwen/qwen3.6-27b', label: 'Qwen 3.6 27B' },
       { id: 'openai/gpt-oss-120b', label: 'OpenAI GPT OSS 120B (High-Speed Flagship)' },
       { id: 'openai/gpt-oss-20b', label: 'OpenAI GPT OSS 20B (Ultra-Fast)' }
     ];
@@ -1264,6 +1321,25 @@ async function mockAskQuestion(question, isTest = false) {
   } else {
     window.deepseekWebSearchEnabled = true;
   }
+
+  if (s.chatgptResponses !== undefined) {
+    window.chatgptResponsesEnabled = !!s.chatgptResponses;
+  } else {
+    window.chatgptResponsesEnabled = true;
+  }
+
+  if (s.autoSend !== undefined) {
+    window.autoSendEnabled = !!s.autoSend;
+  } else {
+    window.autoSendEnabled = true;
+  }
+  if ($('practiceModeToggle') && s.practiceMode !== undefined) {
+    $('practiceModeToggle').checked = !!s.practiceMode;
+  }
+  const autoSendEl = $('autoSendToggle');
+  if (autoSendEl) autoSendEl.checked = window.autoSendEnabled;
+  updateAutoSendHint();
+  ipcRenderer.send('auto-send-state', window.autoSendEnabled !== false);
 
   if (s.provider && s.provider !== 'deepgram' && s.provider !== 'claude' && s.provider !== 'tokenharbor') {
     currentProvider = s.provider;
@@ -1633,6 +1709,19 @@ function tokenizeForSearch(value) {
     .slice(0, 40);
 }
 
+function toResponsesInput(messages) {
+  return (messages || []).map(m => {
+    if (typeof m.content === 'string') return { role: m.role, content: m.content };
+    const parts = (m.content || []).map(part => {
+      if (part.type === 'text') return { type: 'input_text', text: part.text || '' };
+      if (part.type === 'image_url') return { type: 'input_image', image_url: part.image_url?.url || '' };
+      if (part.type === 'image') return { type: 'input_image', image_url: `data:${part.source?.media_type || 'image/jpeg'};base64,${part.source?.data || ''}` };
+      return null;
+    }).filter(Boolean);
+    return { role: m.role, content: parts };
+  });
+}
+
 // 🎤 AUDIO STREAMS & SOCKETS ──────────────────────────────────────
 let micStream = null;
 let systemStream = null;
@@ -1654,6 +1743,9 @@ let geminiScriptProcessor = null;
 let geminiSysScriptProcessor = null;
 let geminiSetupDone = false;
 let geminiSysSetupDone = false;
+let geminiSysCommitted = '';
+let geminiSysTurnText = '';
+let geminiMicTurnText = '';
 
 
 function handleSttEngineChange() {
@@ -1890,6 +1982,10 @@ async function startMic() {
       showMicError(`Please enter your Google AI Studio API Key for ${label}.`);
       return;
     }
+    if (!geminiKey.startsWith('AIza')) {
+      showMicError(`${label} needs a Google AI Studio API key (starts with "AIza…"). The key currently loaded is not a Google key, so the Live socket would be rejected.`);
+      return;
+    }
     console.log(`[Audio] Starting ${label} STT (${modelTag})...`);
     await startGeminiLiveMic(geminiKey, modelTag);
   } else {
@@ -1974,6 +2070,101 @@ function cleanQuestionForAI(text) {
   return text.trim();
 }
 
+function handleAutoSendToggle(enabled) {
+  window.autoSendEnabled = !!enabled;
+  saveS({ autoSend: window.autoSendEnabled });
+  updateAutoSendHint();
+  ipcRenderer.send('auto-send-state', window.autoSendEnabled);
+  if (window.autoSendEnabled) {
+    window.pendingQuestion = '';
+    renderPendingQuestion();
+    ipcRenderer.send('pending-question-cleared');
+  }
+  setStatus(enabled
+    ? '⚡ Auto-send ON — answers fire when the interviewer stops speaking'
+    : '⏸ Auto-send OFF — questions stream live; Answer (Alt+A) or Reject (Alt+X) any time');
+}
+
+function updateAutoSendHint() {
+  const hint = $('autoSendHint');
+  if (!hint) return;
+  const on = window.autoSendEnabled !== false;
+  hint.textContent = on ? 'ON — answers fire automatically' : 'OFF — capture, then Alt+A to send';
+  hint.style.color = on ? 'var(--accent)' : '#fbbf24';
+}
+
+function submitOrQueue(question, imageBase64 = null) {
+  if (window.autoSendEnabled === false) {
+    queuePendingQuestion(question);
+    return;
+  }
+  askQuestion(question, imageBase64);
+}
+
+function cancelPendingTimers() {
+  clearTimeout(silenceTimer);
+  if (window.sysSilenceTimer) clearTimeout(window.sysSilenceTimer);
+  if (window.practiceSilenceTimer) clearTimeout(window.practiceSilenceTimer);
+}
+
+function queuePendingQuestion(question) {
+  const q = String(question || '').trim();
+  if (!q) return;
+  window.pendingQuestion = window.pendingQuestion ? window.pendingQuestion + '\n' + q : q;
+  finalTranscript = '';
+  window.currentInterviewerText = '';
+  renderPendingQuestion();
+  ipcRenderer.send('pending-question', { text: window.pendingQuestion });
+  setStatus('⏸ Question captured — press Alt+A to send, Alt+X to reject');
+}
+
+function renderPendingQuestion() {
+  const bar = $('pendingBar');
+  const txt = $('pendingText');
+  const has = !!window.pendingQuestion;
+  if (bar) bar.style.display = has ? 'block' : 'none';
+  if (txt) txt.textContent = window.pendingQuestion || '';
+}
+
+function clearPendingQuestion() {
+  window.pendingQuestion = '';
+  renderPendingQuestion();
+  ipcRenderer.send('pending-question-cleared');
+}
+
+function sendPendingQuestion() {
+  const live = (window.currentInterviewerText || finalTranscript || '').trim();
+  const q = [window.pendingQuestion, live].filter(Boolean).join('\n').trim();
+  if (!q) {
+    setStatus('No captured question to send.');
+    return;
+  }
+  if (isGenerating) {
+    setStatus('⚡ An answer is still generating — press Alt+A again when it finishes.');
+    return;
+  }
+  cancelPendingTimers();
+  window.pendingQuestion = '';
+  finalTranscript = '';
+  window.currentInterviewerText = '';
+  renderPendingQuestion();
+  ipcRenderer.send('pending-question-cleared');
+  askQuestion(q);
+}
+
+function discardPendingQuestion() {
+  const live = (window.currentInterviewerText || finalTranscript || '').trim();
+  const text = [window.pendingQuestion, live].filter(Boolean).join('\n').trim();
+  if (!text) return;
+  cancelPendingTimers();
+  window.pendingQuestion = '';
+  finalTranscript = '';
+  window.currentInterviewerText = '';
+  renderPendingQuestion();
+  ipcRenderer.send('pending-question-rejected', { text });
+  setStatus('Question rejected — kept on screen, not sent.');
+}
+
 function triggerAnswer() {
   if (isGenerating) {
     console.log('[Audio] Still generating previous answer, ignoring trigger');
@@ -1998,7 +2189,7 @@ function triggerAnswer() {
   const cleanedQ = cleanQuestionForAI(rawQ);
   console.log('[Audio] Valid Question Finalized -> Triggering AI Answer:', cleanedQ);
   finalTranscript = ''; // Reset immediately so subsequent speech starts fresh
-  askQuestion(cleanedQ);
+  submitOrQueue(cleanedQ);
 }
 function startNativeSpeech(SR) {
   try {
@@ -2053,6 +2244,9 @@ function startNativeSpeech(SR) {
 async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcribe-live') {
   const isPracticeMode = document.getElementById('practiceModeToggle')?.checked || false;
   if (!apiKey) { showMicError('Enter your Google Gemini API key first for Gemini 3.5 Transcribe Live.'); return; }
+  geminiSysCommitted = '';
+  geminiSysTurnText = '';
+  geminiMicTurnText = '';
 
   // 1. RAW SYSTEM AUDIO (ZOOM/TEAMS)
   let sysStream = null;
@@ -2198,10 +2392,13 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
           setup: {
             model: modelName,
             generationConfig: {
-              responseModalities: ["TEXT"]
+              responseModalities: [/transcribe/i.test(modelName) ? "TEXT" : "AUDIO"],
+              temperature: 0
             },
+            inputAudioTranscription: {},
+            outputAudioTranscription: {},
             systemInstruction: {
-              parts: [{ text: "You are a specialized real-time speech-to-text engine. Output ONLY the raw transcribed words spoken by the interviewer without any greetings, commentary, or conversational replies. Transcribe accurately." }]
+              parts: [{ text: "You are a speech-to-text engine, not an assistant. Transcribe the incoming audio verbatim. Never answer, teach, coach, greet, explain, or continue the conversation. Never add words that were not spoken. Output only the speaker's exact words. If no speech is present, output nothing." }]
             }
           }
         };
@@ -2233,10 +2430,10 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
             }
             geminiSysSocket.send(JSON.stringify({
               realtimeInput: {
-                mediaChunks: [{
-                  mimeType: "audio/pcm;rate=16000",
+                audio: {
+                  mimeType: `audio/pcm;rate=${geminiSysAudioCtx?.sampleRate || 16000}`,
                   data: btoa(binary)
-                }]
+                }
               }
             }));
           };
@@ -2245,29 +2442,40 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
         }
       };
 
-      geminiSysSocket.onmessage = (msg) => {
+      geminiSysSocket.onmessage = async (msg) => {
         try {
-          const data = JSON.parse(msg.data);
+          const data = JSON.parse(await wsPayload(msg));
           if (data.setupComplete) {
             geminiSysSetupDone = true;
             logDebug('✅ Gemini 3.5 Transcribe Live (System) Setup Complete!');
             return;
           }
-
-          const transcript = data?.serverContent?.modelTurn?.parts?.[0]?.text;
-          if (data?.serverContent && !data.serverContent.turnComplete && !transcript) {
-            console.log('[Gemini Sys WS] Unknown serverContent:', JSON.stringify(data.serverContent));
+          if (data.error) {
+            const errMsg = data.error.message || JSON.stringify(data.error);
+            logDebug('❌ Gemini STT setup/runtime error: ' + errMsg);
+            showMicError('Gemini STT error: ' + errMsg);
+            return;
           }
-          if (transcript) {
+
+          const sc = data?.serverContent;
+          const inputText = (sc?.interimInputTranscription?.text || sc?.inputTranscription?.text || '').trim();
+
+          // triggerAnswer() / pending rejection clears finalTranscript once consumed
+          if (!finalTranscript && (geminiSysCommitted || geminiSysTurnText)) {
+            geminiSysCommitted = '';
+            geminiSysTurnText = '';
+          }
+
+          if (inputText) {
+            // Interim transcripts are cumulative for the current turn, so replace
+            geminiSysTurnText = inputText;
+            finalTranscript = (geminiSysCommitted + ' ' + geminiSysTurnText).trim();
+
             $('waveform').style.opacity = '0.5';
             setTimeout(() => $('waveform').style.opacity = '1', 100);
-
-            finalTranscript += (finalTranscript ? ' ' : '') + transcript.trim();
-            finalTranscript = finalTranscript.trim();
-            let fullText = finalTranscript;
-            $('transcript').innerHTML = `<span class="t-final">${esc(fullText)}</span>`;
-            ipcRenderer.send('interviewer-interim', fullText);
-            window.currentInterviewerText = fullText;
+            $('transcript').innerHTML = `<span class="t-final">${esc(finalTranscript)}</span>`;
+            ipcRenderer.send('interviewer-interim', finalTranscript);
+            window.currentInterviewerText = finalTranscript;
 
             if (window.sysSilenceTimer) clearTimeout(window.sysSilenceTimer);
             if (!isLongQuestionMode && !isGenerating && finalTranscript.length > 5) {
@@ -2280,8 +2488,12 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
             }
           }
 
-          if (data?.serverContent?.turnComplete && window.currentInterviewerText) {
-            finalTranscript = window.currentInterviewerText;
+          // End of an utterance: promote the turn text into the committed buffer
+          if (data?.voiceActivity?.type === 'ACTIVITY_END' && geminiSysTurnText) {
+            geminiSysCommitted = (geminiSysCommitted + ' ' + geminiSysTurnText).trim();
+            geminiSysTurnText = '';
+            finalTranscript = geminiSysCommitted;
+            window.currentInterviewerText = finalTranscript;
           }
         } catch (e) {
           logDebug('❌ Gemini sys message parse error: ' + e.message);
@@ -2295,6 +2507,9 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
 
       geminiSysSocket.onclose = (e) => {
         logDebug(`⚠ Gemini Transcribe socket closed (${e.code || 'no-code'}). Reconnecting if still listening...`);
+        if (!geminiSysSetupDone) {
+          setStatus(`⚠ Gemini Live closed before setup (code ${e.code || 'none'}) — check the model ID and Google key.`);
+        }
         if (isListening && (isPracticeMode ? micStream : systemStream)) {
           setTimeout(connectGeminiSysSocket, 1500);
         }
@@ -2316,9 +2531,11 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
         const setupMsg = {
           setup: {
             model: modelName,
-            generationConfig: { responseModalities: ["TEXT"] },
+            generationConfig: { responseModalities: [/transcribe/i.test(modelName) ? "TEXT" : "AUDIO"], temperature: 0 },
+            inputAudioTranscription: {},
+            outputAudioTranscription: {},
             systemInstruction: {
-              parts: [{ text: "You are a real-time speech-to-text engine. Output ONLY the raw transcribed words spoken by the user without any conversational replies. Transcribe accurately." }]
+              parts: [{ text: "You are a speech-to-text engine, not an assistant. Transcribe the incoming audio verbatim. Never answer, teach, coach, greet, explain, or continue the conversation. Never add words that were not spoken. Output only the speaker's exact words. If no speech is present, output nothing." }]
             }
           }
         };
@@ -2350,39 +2567,43 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
             }
             geminiSocket.send(JSON.stringify({
               realtimeInput: {
-                mediaChunks: [{
-                  mimeType: "audio/pcm;rate=16000",
+                audio: {
+                  mimeType: `audio/pcm;rate=${geminiAudioCtx?.sampleRate || 16000}`,
                   data: btoa(binary)
-                }]
+                }
               }
             }));
           };
         } catch (audioErr) {}
       };
 
-      geminiSocket.onmessage = (msg) => {
+      geminiSocket.onmessage = async (msg) => {
         try {
-          const data = JSON.parse(msg.data);
+          const data = JSON.parse(await wsPayload(msg));
           if (data.setupComplete) {
             geminiSetupDone = true;
             return;
           }
-          const transcript = data?.serverContent?.modelTurn?.parts?.[0]?.text?.trim();
-          if (data?.serverContent && !data.serverContent.turnComplete && !transcript) {
-            console.log('[Gemini Mic WS] Unknown serverContent:', JSON.stringify(data.serverContent));
+          if (data.error) {
+            const errMsg = data.error.message || JSON.stringify(data.error);
+            logDebug('❌ Gemini mic STT error: ' + errMsg);
+            return;
           }
-          if (transcript) {
-            const liveCandidateText = (candidateFinalTranscript ? candidateFinalTranscript + ' ' : '') + transcript;
-            candidateTranscript = liveCandidateText.trim();
+          const sc = data?.serverContent;
+          const inputText = (sc?.interimInputTranscription?.text || sc?.inputTranscription?.text || '').trim();
+          if (inputText) {
+            geminiMicTurnText = inputText;
+            candidateTranscript = (candidateFinalTranscript + ' ' + geminiMicTurnText).trim();
             ipcRenderer.send('candidate-interim', candidateTranscript);
-
-            if (data?.serverContent?.turnComplete) {
-              candidateFinalTranscript = candidateTranscript;
-              ipcRenderer.send('candidate-spoke', candidateTranscript);
-              currentSessionQA.push({ role: 'candidate', text: candidateTranscript, time: new Date().toISOString() });
-              candidateFinalTranscript = '';
-              candidateTranscript = '';
-            }
+          }
+          const micTurnEnded = (data?.voiceActivity?.type === 'ACTIVITY_END') || sc?.turnComplete;
+          if (micTurnEnded && geminiMicTurnText) {
+            const utterance = (candidateFinalTranscript + ' ' + geminiMicTurnText).trim();
+            geminiMicTurnText = '';
+            candidateFinalTranscript = '';
+            candidateTranscript = '';
+            ipcRenderer.send('candidate-spoke', utterance);
+            currentSessionQA.push({ role: 'candidate', text: utterance, time: new Date().toISOString() });
           }
         } catch(e) {}
       };
@@ -2582,10 +2803,11 @@ async function startDeepgramMic(apiKey) {
             setTimeout(() => $('waveform').style.opacity = '1', 100);
 
             // ── CROSS-TALK SUPPRESSION ──────────────────────────────────
+            // In Practice Mode the mic IS the interviewer, so comparing against itself would suppress it
             const interviewerText = (window.currentInterviewerText || '').toLowerCase();
             const micText = transcript.toLowerCase();
             let isCrossTalk = false;
-            if (interviewerText.length > 5 && micText.length > 5) {
+            if (!isPracticeMode && interviewerText.length > 5 && micText.length > 5) {
               const micWords = micText.match(/[a-z]{3,}/g) || [];
               const interviewerWords = new Set(interviewerText.match(/[a-z]{3,}/g) || []);
               const matchCount = micWords.filter(w => interviewerWords.has(w)).length;
@@ -2720,15 +2942,6 @@ async function startDeepgramMic(apiKey) {
     } catch(err) {}
   }
 
-  function logDebug(msg) {
-    console.log(msg);
-    const dbg = document.getElementById('massiveDebug');
-    if (dbg) {
-      dbg.innerText = msg + '\n' + dbg.innerText;
-      if (dbg.innerText.length > 2000) dbg.innerText = dbg.innerText.substring(0, 2000);
-    }
-  }
-
   connectMicSocket();
   connectSysSocket();
 }
@@ -2756,7 +2969,7 @@ async function startWhisperMic() {
         $('transcript').innerHTML = `<span class="t-final">${esc(finalTranscript)}</span>`;
         $('manualQ').value = finalTranscript;
         setStatus('🧪 Mock transcript ready — auto-asking…');
-        askQuestion(finalTranscript);
+        submitOrQueue(finalTranscript);
       }
       if (isListening) setTimeout(mockChunkLoop, 5000);
     }
@@ -2807,7 +3020,7 @@ async function startWhisperMic() {
         if (!isLongQuestionMode) {
           silenceTimer = setTimeout(() => {
             if (finalTranscript.length > 5) {
-              askQuestion(finalTranscript);
+              submitOrQueue(finalTranscript);
               finalTranscript = '';
             }
           }, 1500);
@@ -2984,115 +3197,95 @@ function buildChatGPTSystemPrompt(question = '', useOverride = true) {
   if (useOverride && chatgptPromptOverride) {
     p = chatgptPromptOverride;
   } else {
-    p = `You are a Senior Salesforce Developer answering questions in a live technical interview. Your goal is to give technically accurate, implementation-focused answers that sound natural, confident, and easy to speak aloud.
+    p = `You are my real-time Salesforce interview assistant in a live interview. I am a Salesforce Developer with 4+ years of hands-on experience in Sales Cloud, Service Cloud, Apex, Lightning Web Components (LWC), Flow Builder, and integrations. Your job is to help me explain technical decisions the way an experienced Salesforce Developer naturally would in a live interview.
 
-## 1. Answer structure
+## 1. Natural speaking style
 
-- **Answer in bullet points by default.** Keep each bullet focused on one technical point.
-- Start with the direct answer, followed by the technical implementation.
-- Mention specific Salesforce technologies, Apex classes, methods, annotations, events, or components wherever relevant.
-- Explain how the solution works in practice, not just what the technology means.
-- Include important technical decisions, execution flow, and trade-offs when relevant.
-- Use first person for implementation decisions, such as "I use a handler class..." or "I would implement this using Queueable Apex..."
-- Keep the answer concise enough to speak naturally in an interview. Avoid unnecessary background, repetition, greetings, and filler.
-- Do not force every answer into the same template. Choose the structure that best fits the question.
+- Use simple, professional, conversational English.
+- Sound like a real developer speaking, not technical documentation being read aloud.
+- Explain concepts naturally, as if I am discussing my implementation with another developer.
+- Use first person where it fits: "I usually handle this by...", "In this scenario I would...", "The reason I prefer this approach is..."
+- Avoid formal, robotic, textbook phrasing.
+- Avoid unnecessary technical jargon unless it adds value.
 
-## 2. Match the answer to the question
+## 2. Answer depth
 
-**Simple technical questions**
-- Answer in 1–3 concise bullets.
-- Give the definition or direct answer and one important technical detail.
+- Straightforward question: 3 to 4 sentences.
+- Technical question: 4 to 6 sentences with a little explanation.
+- Scenario-based question: the approach, the implementation, and why I chose it.
+- Architecture question: the design, the execution flow, and the important considerations.
+- Follow-up question: explain the specific point being asked without repeating the previous answer.
+- Do not make answers unnecessarily long, but never sacrifice important technical detail just to keep them short.
 
-**Conceptual questions**
-- Explain what the concept is, when I use it, and why it matters.
-- Include a practical Salesforce example when useful.
+## 3. Explain the implementation
 
-**Implementation questions: "How did you implement it?"**
-- Explain the solution in implementation order:
-  1. Requirement and technical approach.
-  2. Salesforce components and their responsibilities.
-  3. Execution flow and important methods.
-  4. Error handling, security, testing, or performance considerations where relevant.
-- Use concrete technical details instead of generic statements.
-- Never claim I personally implemented something unless it is supported by my provided project background.
+Where relevant, naturally cover:
+1. What approach I would take.
+2. Which Salesforce components I would use.
+3. How the implementation would work.
+4. Why that approach is suitable.
+5. Important limitations, governor limits, security, or error-handling considerations.
 
-**Scenario-based questions**
-- State the recommended solution first.
-- Explain the implementation in bullets.
-- Cover the key Salesforce limitation or trade-off that affects the decision.
+Do not force all five points into every answer. Include only what is relevant.
 
-**Architecture and integration questions**
-- Explain the components, data flow, authentication, transaction boundaries, error handling, retry strategy, and idempotency only where relevant.
-- Identify the system of record and synchronous versus asynchronous processing when those decisions matter.
+## 4. Salesforce technical accuracy
 
-**Coding questions**
-- Start with one bullet explaining the approach.
-- Provide complete, compile-consistent Apex, SOQL, trigger, or LWC code as requested.
-- Follow the code with 2–4 bullets explaining the implementation and important considerations.
-- Never provide pseudocode when executable code is requested, unless the missing org-specific information makes a complete solution impossible.
+Use correct Salesforce terminology, API names, platform behavior, and execution contexts. Never invent classes, methods, fields, annotations, limits, or features.
 
-## 3. Salesforce technical depth
+- Apex: bulkification, Sets and Maps, SOQL and DML optimization, exception handling.
+- Triggers: thin triggers, handler classes, trigger context variables, recursion control.
+- Async Apex: Queueable, Batch, Scheduled Apex, callout handling and retries.
+- LWC: @api, @wire, imperative Apex, refreshApex, Custom Events and Lightning Message Service.
+- Flow versus Apex: when declarative automation is sufficient and when Apex is more suitable.
+- Security: record-level sharing, CRUD and FLS, WITH USER_MODE and Security.stripInaccessible.
+- Integrations: OAuth, REST and SOAP, Named Credentials, external IDs, idempotency, retries and error logging.
+- Service Cloud: Email-to-Case, Assignment Rules, Queues, Entitlements and Milestones.
+- Testing: bulk records, positive and negative scenarios, asynchronous execution and meaningful assertions.
 
-For technical questions, prioritize the actual Salesforce implementation over generic theory.
+If a technical approach in the question is incorrect, explain the correct approach instead of repeating the incorrect assumption.
 
-- **Apex:** Explain triggers, handler/service classes, collections, SOQL/DML, transaction behavior, exception handling, and asynchronous Apex where relevant.
-- **Triggers:** Respect trigger context, use one trigger per object, keep triggers thin, bulkify logic, and avoid unnecessary recursion.
-- **LWC:** Identify when to use @api, @wire, imperative Apex, cacheable Apex, refreshApex, CustomEvent, Lightning Message Service, and appropriate error handling.
-- **Flow versus Apex:** Prefer Flow for straightforward declarative automation; use Apex when complex logic, high volume, integrations, reusable code, or advanced error handling justify it.
-- **Security:** Consider sharing, CRUD/FLS, user-mode operations, and Security.stripInaccessible when applicable. Do not confuse record sharing with object and field permissions.
-- **Integrations:** Use appropriate APIs, Named Credentials, asynchronous processing, retries, and idempotency according to the requirements.
-- **Testing:** Include bulk, negative, boundary, permission, and asynchronous test scenarios when relevant.
-- **Performance:** Avoid SOQL and DML inside loops, minimize unnecessary queries, and account for governor limits and transaction boundaries.
+## 5. Interview experience and honesty
 
-Mention only the technical details that are relevant to the question. Do not dump every best practice into every answer.
+- My confirmed experience is 4+ years.
+- My core experience is Sales Cloud, Service Cloud, Apex, LWC, Flow and integrations.
+- Do not invent project implementations, client names, responsibilities, metrics or achievements.
+- When asked about a specific project, use only details supported by the supplied resume.
+- When something is not established in my experience, answer as "I would implement it this way" instead of claiming "I implemented it".
+- My resume supports Sales Cloud, Service Cloud, Apex, LWC, Flow and integrations. Treat CPQ and Agentforce as areas to answer with the correct recommended approach, not as claimed hands-on experience, unless the resume supports it.
 
-## 4. Technical accuracy rules
+## 6. Scenario-based questions
 
-- Verify Salesforce API names, syntax, annotations, execution context, governor limits, and platform behavior before answering.
-- Never invent fields, methods, classes, APIs, project requirements, or implementation history.
-- Use Sets, Maps, and collection-based SOQL/DML for bulk processing.
-- Handle relevant null and empty cases.
-- Prefer Queueable Apex for suitable new asynchronous work and Batch Apex for large-volume processing.
-- Never chain Future methods.
-- Use partial-success DML only when its behavior is intended.
-- Respect callout/DML restrictions, trigger transaction behavior, and asynchronous execution rules.
-- State a brief assumption if necessary, then proceed with the best solution.
-- If a technical detail cannot be verified, state the uncertainty rather than presenting a guess as fact.
+Answer like an experienced developer solving a production requirement. Explain the actual solution: which trigger or service class is involved, how records are queried and updated, whether asynchronous processing is required, how exceptions and partial failures are handled, and how data consistency and security are maintained. Include trade-offs where they matter.
 
-## 5. Use my project context
+## 7. Coding questions
 
-Use my supplied resume and project details as the source of truth for my personal experience.
+- Start with a short explanation of the approach.
+- Provide complete, compile-consistent code.
+- Follow the code with a few important implementation notes.
+- Consider bulkification, security, governor limits and edge cases.
+- Never provide pseudocode when executable code is requested.
 
-My interview profile includes Salesforce development involving Apex, triggers, LWC, Flow Builder, Sales Cloud, Service Cloud, Salesforce CPQ, integrations, testing, and CI/CD. My internal case-management project serves internal users and includes case creation, case types, Salesforce automation, asynchronous processing, and ERP integration.
+## 8. Follow-up questions
 
-- Use these details when they are relevant to the question.
-- When asked about my actual project, explain the implementation using only supported project details.
-- When asked a general technical question, answer with the correct Salesforce approach even if the topic is not explicitly mentioned in my project background.
-- Clearly distinguish between an implementation I have described and a recommended implementation I would use.
-- Never invent metrics, production incidents, architecture details, or years of experience.
+- Use the previous conversation as context. If I ask "why?", "how?", "what happens if it fails?" or "can you explain?", expand only on that specific topic.
+- Do not repeat the entire previous answer.
+- If the new question is unrelated to the earlier ones, answer it independently and do not force a connection.
 
-## 6. Follow-up questions
+## 9. Speech-to-text interpretation
 
-- Use relevant context from previous answers.
-- Answer only the new question.
-- Do not repeat the entire previous explanation.
-- If the interviewer asks "why?", explain the technical reason and trade-off.
-- If the interviewer asks "how?", explain the implementation steps and the Salesforce components involved.
-- If the interviewer asks for code, provide the relevant code directly.
+I may provide questions through speech-to-text, so grammar and technical terms may be incorrect. Understand the intended Salesforce question and answer it directly. Ask for clarification only if different interpretations would materially change the solution.
 
-## 7. Final response rule
+## 10. Final response style
 
-Return the interview answer directly in concise bullet points by default.
+- Give the actual answer immediately.
+- Use natural paragraphs by default, not excessive bullet points.
+- Make answers slightly explanatory, technically strong and easy to speak aloud.
+- Avoid generic introductions and conclusions.
+- Avoid repeating the question.
+- Do not add unrelated best practices.
+- Every answer should sound credible in a real technical interview.
 
-Use code blocks for code, and use numbered steps only when explaining an execution sequence.
-
-Prioritize:
-1. Correct technical answer.
-2. Concrete Salesforce implementation.
-3. Clear explanation of why the approach works.
-4. Concise, natural spoken delivery.
-
-Do not add a separate introduction, conclusion, generic summary, or unrelated best practices unless the question requires them.`;
+Main objective: help me communicate my actual Salesforce knowledge confidently, naturally, and with enough technical depth to demonstrate the thinking of an experienced developer.`;
   }
 
   if (jdTextData && (!useOverride || !chatgptPromptOverride.includes(jdTextData))) {
@@ -3175,10 +3368,17 @@ async function approveChatGPTPromptPreview() {
     
     const prov = PROVIDERS[currentProvider];
     const model = prov.model;
+    const ackViaResponses = currentProvider === 'chatgpt' && window.chatgptResponsesEnabled !== false;
+
+    const endpoint = prov.apiBase + (ackViaResponses ? '/responses' : '/chat/completions');
     
-    const endpoint = prov.apiBase + '/chat/completions';
-    
-    const reqBody = {
+    const reqBody = ackViaResponses ? {
+      model: model,
+      instructions: chatgptPromptOverride,
+      input: 'Acknowledge that you have received these instructions by replying exactly with "Prompt received".',
+      max_output_tokens: 50,
+      store: false
+    } : {
       model: model,
       messages: [
         { role: 'system', content: chatgptPromptOverride },
@@ -3186,10 +3386,12 @@ async function approveChatGPTPromptPreview() {
       ]
     };
 
-    if (currentProvider === 'chatgpt') {
-      reqBody.max_completion_tokens = 50;
-    } else {
-      reqBody.max_tokens = 50;
+    if (!ackViaResponses) {
+      if (currentProvider === 'chatgpt') {
+        reqBody.max_completion_tokens = 50;
+      } else {
+        reqBody.max_tokens = 50;
+      }
     }
 
     const res = await fetch(endpoint, {
@@ -3200,7 +3402,9 @@ async function approveChatGPTPromptPreview() {
     
     if (res.ok) {
       const data = await res.json();
-      const reply = data.choices[0].message.content;
+      const reply = ackViaResponses
+        ? (data.output_text || (data.output || []).flatMap(o => o.content || []).map(c => c.text || '').join(''))
+        : data.choices[0].message.content;
       setStatus('Model replied: ' + reply);
       $('chatgptPromptPreview').style.display = 'none';
       if (promptPreviewResolve) {
@@ -3227,6 +3431,7 @@ function cancelChatGPTPromptPreview() {
 
 async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
   let question = qOverride || $('manualQ').value.trim();
+  question = question.replace(/^\[FOLLOW-UP QUESTION\]:?\s*/i, '').trim();
   if (!question && !imageBase64) return;
   if (isGenerating && !isTest) {
     setStatus('⚡ An answer is already generating…');
@@ -3259,42 +3464,54 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
     effectiveKey = 'env_placeholder';
   }
 
-  if (imageBase64 && effectiveProvider === 'groq' && effectiveKey) {
-    setStatus('🔍 Processing screen text OCR…');
-    let extractedText = '';
-    try {
-      const visionRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  // ── Screen images: vision models read the image; text-only models get an OCR transcript ──
+  const VISION_PROVIDERS = ['gemini', 'gemini2', 'groq', 'chatgpt'];
+  if (imageBase64 && !VISION_PROVIDERS.includes(effectiveProvider)) {
+    setStatus('🔍 Reading the screen with a vision model…');
+    const rawSettings = window._rawSettings || {};
+    const groqKey = (envConfig?.savedApiKeys?.groq) || (rawSettings.apiKeys?.groq) || '';
+    const geminiKey = (envConfig?.savedApiKeys?.gemini2 || envConfig?.savedApiKeys?.gemini) ||
+                      (rawSettings.apiKeys?.gemini2 || rawSettings.apiKeys?.gemini) ||
+                      rawSettings.geminiSttApiKey || '';
+    const ocrPrompt = 'Extract everything visible in this screenshot exactly as written: the question, all answer options, code, tables, labels, and any diagram text. Do not answer it. Output plain text only, no commentary.';
+    const tryVision = async (url, key, model, img) => {
+      const r = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveKey}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
         body: JSON.stringify({
-          model: 'qwen/qwen3.8-27b',
-          max_tokens: 1500,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'text', text: 'You are an OCR and code extraction engine. Extract ONLY the technical interview question, coding instructions, code snippets, method signatures, constraints, and test cases shown in this screen. Output the pure text faithfully, no commentary.' },
-              { type: 'image_url', image_url: { url: imageBase64 } }
-            ]
-          }]
+          model,
+          max_tokens: 2000,
+          messages: [{ role: 'user', content: [
+            { type: 'text', text: ocrPrompt },
+            { type: 'image_url', image_url: { url: img } }
+          ] }]
         })
       });
-      if (visionRes.ok) {
-        const vData = await visionRes.json();
-        const textOut = vData.choices?.[0]?.message?.content?.trim();
-        if (textOut && textOut.length > 20) {
-          extractedText = textOut;
-        }
+      if (!r.ok) return '';
+      const d = await r.json();
+      return d.choices?.[0]?.message?.content?.trim() || '';
+    };
+
+    const images = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
+    let extractedText = '';
+    for (let idx = 0; idx < images.length; idx++) {
+      let part = '';
+      try {
+        if (groqKey) part = await tryVision('https://api.groq.com/openai/v1/chat/completions', groqKey, 'qwen/qwen3.8-27b', images[idx]);
+        if (!part && geminiKey) part = await tryVision('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', geminiKey, 'gemini-3.5-flash-lite', images[idx]);
+      } catch (vErr) {
+        console.warn('Screen OCR attempt failed:', vErr);
       }
-    } catch (vErr) {
-      console.warn('Vision OCR attempt failed:', vErr);
+      if (part) extractedText += (images.length > 1 ? `\n\n--- Part ${idx + 1} ---\n` : '') + part;
     }
 
     if (extractedText) {
-      question = 'INTERVIEW SCREEN CODING PROBLEM (EXTRACTED FROM SCREEN):\n' + extractedText + '\n\nPlease solve this complete coding problem with production-ready code according to our Senior Architect standards.';
-      setStatus('⚡ Solving screen coding problem with ' + cfg.model + '…');
+      question = '[SCREEN CONTENT — EXTRACTED FROM SCREENSHOT]\n' + extractedText + (question ? '\n\n' + question : '');
+      setStatus('⚡ Answering screen question with ' + cfg.model + '…');
     } else {
-      question = (question ? question + '\n\n' : '') + '[Screen image captured. Please solve the requested problem shown on screen with complete production code.]';
+      question = (question ? question + '\n\n' : '') + '[A screenshot was captured, but the selected model cannot view images and OCR was unavailable.]';
     }
+    imageBase64 = null;
     imageBase64 = null;
   }
 
@@ -3334,39 +3551,32 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
     const headers = { 'Content-Type': 'application/json' };
     let body;
 
+    // ── Conversation memory: replay recent exchanges like a chat thread ──
+    // The model sees the thread and decides whether the new question depends on it.
     const historyMessages = [];
-    const qLower = question.toLowerCase();
-    const isAutoFollowUp = question.startsWith('[FOLLOW-UP QUESTION]') || 
-                           qLower.startsWith('why do') ||
-                           qLower.startsWith('why have') ||
-                           qLower.startsWith('can you implement') ||
-                           qLower.startsWith('can you write') ||
-                           qLower.startsWith('how will you write') ||
-                           qLower.startsWith('what about') ||
-                           qLower.includes('in that case') ||
-                           qLower.includes('in this map') ||
-                           qLower.includes('that code') ||
-                           qLower.includes('previous');
+    const memorySource = isTest ? testChatHistory : currentSessionQA;
+    const exchanges = memorySource.filter(x => x && x.question && x.answer);
+    const MAX_HISTORY_CHARS = 14000;
+    let keepFrom = Math.max(0, exchanges.length - 8);
+    let historyChars = 0;
+    for (let i = keepFrom; i < exchanges.length; i++) {
+      historyChars += (exchanges[i].question || '').length + (exchanges[i].answer || '').length;
+    }
+    while (keepFrom < exchanges.length - 1 && historyChars > MAX_HISTORY_CHARS) {
+      historyChars -= (exchanges[keepFrom].question || '').length + (exchanges[keepFrom].answer || '').length;
+      keepFrom++;
+    }
+    for (const x of exchanges.slice(keepFrom)) {
+      historyMessages.push({ role: 'user', content: x.question });
+      historyMessages.push({ role: 'assistant', content: x.answer });
+    }
 
-    const recentHistory = isTest ? testChatHistory : currentSessionQA;
-    if (isAutoFollowUp && recentHistory.length > 0) {
-      const recentQA = recentHistory.slice(-4);
-      for (const qa of recentQA) {
-        if (qa.role === 'candidate') {
-          historyMessages.push({ role: 'user', content: `Candidate's response: "${qa.text}"` });
-        } else if (qa.question && qa.answer) {
-          historyMessages.push({ role: 'user', content: `Interviewer: "${qa.question}"` });
-          historyMessages.push({ role: 'assistant', content: qa.answer });
-        }
-      }
-      const cleanQ = question.replace('[FOLLOW-UP QUESTION]: ', '');
-      historyMessages.push({ role: 'user', content: `Interviewer's current question/request (maintaining context with the preceding discussion above): "${cleanQ}"` });
-    } else if (imageBase64) {
+    if (imageBase64) {
       const images = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
       if (['zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
         const contentParts = [
           { type: 'text', text: images.length > 1 
-              ? `This is a single complete coding problem captured across ${images.length} sequential vertical screenshots of the problem statement, constraints, and test cases. Please analyze all parts as ONE cohesive problem and generate the complete, optimal, compile-consistent, edge-case-safe solution with Big-O time and space complexity.`
+              ? `These ${images.length} screenshots are sequential parts of one question. Read all parts together, then answer what is asked. It may be a multiple-choice question, a coding problem, a diagram, or a form. If it is multiple choice, state the correct option with a one-line reason.`
               : `Interviewer's question/screen: "${question}"` }
         ];
         images.forEach(img => {
@@ -3391,7 +3601,7 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
         });
       }
     } else {
-      historyMessages.push({ role: 'user', content: `Practice interview question: "${question}"` });
+      historyMessages.push({ role: 'user', content: question });
     }
     let modelsToTry = [];
     const selectEl = document.getElementById('aiModelSelect');
@@ -3408,9 +3618,11 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
     }
 
     let res;
+    let responsesModeActive = false;
     for (let i = 0; i < modelsToTry.length; i++) {
       const currentModel = modelsToTry[i];
       const isOpenAICompatible = ['zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider);
+      const useResponsesApi = effectiveProvider === 'chatgpt' && window.chatgptResponsesEnabled !== false;
 
       if (isOpenAICompatible) {
         headers['Authorization'] = `Bearer ${effectiveKey}`;
@@ -3556,6 +3768,30 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
           requestBody.max_tokens = 4096;
         }
 
+        if (useResponsesApi) {
+          // Re-shape the Chat Completions payload into the Responses API shape
+          requestBody.input = toResponsesInput(sanitizedMessages);
+          requestBody.instructions = sysContent;
+          requestBody.store = false;
+          delete requestBody.messages;
+          delete requestBody.stream_options;
+          if (requestBody.max_tokens !== undefined) {
+            requestBody.max_output_tokens = requestBody.max_tokens;
+            delete requestBody.max_tokens;
+          }
+          if (requestBody.max_completion_tokens !== undefined) {
+            requestBody.max_output_tokens = requestBody.max_completion_tokens;
+            delete requestBody.max_completion_tokens;
+          }
+          if (requestBody.reasoning_effort !== undefined) {
+            const effort = requestBody.reasoning_effort;
+            delete requestBody.reasoning_effort;
+            if (effort !== 'none') {
+              requestBody.reasoning = { effort: effort === 'xhigh' ? 'high' : effort };
+            }
+          }
+          responsesModeActive = true;
+        }
         body = JSON.stringify(requestBody);
       } else {
         headers['x-api-key'] = effectiveKey;
@@ -3571,7 +3807,7 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
       }
 
       const endpoint = isOpenAICompatible
-        ? `${cfg.apiBase}/chat/completions`
+        ? (useResponsesApi ? `${cfg.apiBase}/responses` : `${cfg.apiBase}/chat/completions`)
         : `${cfg.apiBase}/messages`;
 
       res = await fetch(endpoint, { 
@@ -3616,6 +3852,7 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
     let buf = '';
     let inThinkTag = false;
     let cachedTokensFound = 0;
+    let streamError = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -3639,6 +3876,10 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
             const cached = p.usage.prompt_tokens_details?.cached_tokens ?? p.usage.prompt_cache_hit_tokens ?? 0;
             if (cached > 0) cachedTokensFound = cached;
           }
+          if (p.response?.usage) {
+            const cached = p.response.usage.input_tokens_details?.cached_tokens ?? 0;
+            if (cached > 0) cachedTokensFound = cached;
+          }
 
           // Live indicator if reasoning model is streaming reasoning tokens
           const reasoningContent = p.choices?.[0]?.delta?.reasoning_content;
@@ -3647,7 +3888,16 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
           }
 
           let chunk = '';
-          if (['grok', 'zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
+          if (responsesModeActive) {
+            // OpenAI Responses API event stream
+            if (p.type === 'response.output_text.delta') {
+              chunk = p.delta || '';
+            } else if (p.type === 'response.reasoning_summary_text.delta') {
+              if (!fullAnswer) setStatus('🤔 Reasoning in progress…');
+            } else if (p.type === 'response.failed' || p.type === 'error') {
+              streamError = p.response?.error?.message || p.error?.message || p.message || 'Responses API stream error';
+            }
+          } else if (['grok', 'zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
             chunk = p.choices?.[0]?.delta?.content || '';
           } else {
             if (p.type === 'content_block_delta' && p.delta?.text) {
@@ -3683,6 +3933,8 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
       }
     }
     
+    if (streamError) throw new Error(streamError);
+
     fullAnswer = fullAnswer.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
     ipcRenderer.send(isTest ? 'test-ai-done' : 'answer-done');
@@ -3700,6 +3952,9 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
       setStatus('Answer generation cancelled.');
     } else {
       let errText = '\n\n⚠ **API Error**: ' + err.message + '\n*(Check your API key and model selection)*';
+      if (responsesModeActive && /404|400|not found|unsupported|does not support|unknown endpoint/i.test(err.message)) {
+        errText += '\n\n💡 **Responses API call failed.** Turn off **OpenAI Responses API** in the model settings to fall back to `/v1/chat/completions`, or select a model that supports `/v1/responses`.';
+      }
       if (effectiveProvider === 'deepseek' && (err.message.includes('timeout') || err.message.includes('Failed to fetch') || err.message.includes('terminated') || err.message.includes('network'))) {
         errText = '\n\n⚠ **DeepSeek Cloud Server Congestion**:\nDeepSeek\'s official API servers are currently overloaded and exceeding their queue limits.\n\n👉 **Recommended:** Switch to **Google Gemini (Gemini 3.8 Flash)** or **ChatGPT (GPT-6 Luna)** in the model selector while DeepSeek clears their server queue.';
       }
@@ -3728,6 +3983,7 @@ function autoSaveSession(isTest = false) {
 
 function clearAll() {
   ipcRenderer.send('answer-clear');
+  clearPendingQuestion();
   $('transcript').innerHTML = '<span class="t-placeholder">Transcript will appear here…</span>';
   $('manualQ').value = '';
   finalTranscript = '';
@@ -3853,6 +4109,23 @@ ipcRenderer.on('opacity-changed', (_, pct) => {
 
 function setStatus(msg) { $('statusMsg').textContent = msg; }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function logDebug(msg) {
+  console.log(msg);
+  const dbg = document.getElementById('massiveDebug');
+  if (dbg) {
+    dbg.innerText = msg + '\n' + dbg.innerText;
+    if (dbg.innerText.length > 2000) dbg.innerText = dbg.innerText.substring(0, 2000);
+  }
+}
+
+// Gemini Live delivers frames as binary Blobs, not strings
+async function wsPayload(msg) {
+  const raw = msg.data;
+  if (typeof raw === 'string') return raw;
+  if (raw instanceof Blob) return await raw.text();
+  if (raw instanceof ArrayBuffer) return new TextDecoder().decode(raw);
+  return String(raw);
+}
 
 ipcRenderer.on('ask-followup', (_, text) => {
   if (text && text.trim()) {
@@ -3902,6 +4175,10 @@ ipcRenderer.on('abort-generation', () => {
 });
 
 ipcRenderer.on('force-trigger-answer', () => {
+  if (window.pendingQuestion) {
+    sendPendingQuestion();
+    return;
+  }
   const current = (window.currentInterviewerText || finalTranscript || $('manualQ').value || candidateTranscript || '').trim();
   if (current && !isGenerating) {
     finalTranscript = '';
@@ -3917,6 +4194,9 @@ ipcRenderer.on('force-trigger-answer', () => {
   }
 });
 
+ipcRenderer.on('send-pending-question', () => sendPendingQuestion());
+ipcRenderer.on('discard-pending-question', () => discardPendingQuestion());
+
 let currentScreenshotPath = null;
 
 ipcRenderer.on('process-screenshot', (_, data) => {
@@ -3924,7 +4204,7 @@ ipcRenderer.on('process-screenshot', (_, data) => {
   currentScreenshotPath = (typeof data === 'object' && data.filePath) ? data.filePath : null;
   const filename = (typeof data === 'object' && data.filename) ? data.filename : 'saved';
   setStatus(`📸 Screenshot captured & saved (${filename}) — analyzing code…`);
-  askQuestion('Please solve the coding problem shown on this screen.', base64Image);
+  askQuestion('Answer the question shown on this screen. It may be a multiple-choice question, a coding problem, a diagram, or a form. If it is multiple choice, state the correct option and give a one-line reason.', base64Image);
 });
 
 ipcRenderer.on('process-multi-screenshot', (_, parts) => {
@@ -3932,10 +4212,10 @@ ipcRenderer.on('process-multi-screenshot', (_, parts) => {
   const filePaths = parts.map(p => p.filePath).filter(Boolean);
   currentScreenshotPath = filePaths.join(';');
   const filenames = parts.map(p => p.filename).join(', ');
-  setStatus(`📸 Multi-part screen captured (${parts.length} parts) — analyzing full coding problem…`);
+  setStatus(`📸 Multi-part screen captured (${parts.length} parts) — analyzing screen question…`);
   
   const base64List = parts.map(p => p.base64);
-  askQuestion(`Please solve this complete coding problem captured across ${parts.length} sequential screenshots of the problem statement, constraints, and test cases. Provide the optimal, compile-ready solution with Big-O analysis and edge-case handling.`, base64List);
+  askQuestion(`These ${parts.length} screenshots are sequential parts of one question. Read all parts together, then answer what is asked. It may be a multiple-choice question, a coding problem, a diagram, or a form. If it is multiple choice, state the correct option with a one-line reason.`, base64List);
 });
 
 // ── 🌐 DEEPSEEK TOOLS API: SEARCH & FETCH ENGINE ──

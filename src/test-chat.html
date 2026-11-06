@@ -373,7 +373,7 @@ if ('webkitSpeechRecognition' in window) {
       if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
       else interimTranscript += event.results[i][0].transcript;
     }
-    if (finalTranscript) { input.value = (input.value + ' ' + finalTranscript).trim(); sendMessage(); }
+    if (finalTranscript) { input.value = (input.value + ' ' + finalTranscript).trim(); }
     else { input.value = interimTranscript; }
   };
   fallbackRecognition.onerror = (e) => { console.error("Speech error", e.error); stopRecording(); };
@@ -464,7 +464,6 @@ async function startDeepgram(dgKey) {
       if (data.type === 'UtteranceEnd') {
         if (currentSentence.length > 2) {
           input.value = currentSentence;
-          sendMessage();
           currentSentence = '';
         }
         return;
@@ -476,7 +475,6 @@ async function startDeepgram(dgKey) {
         currentSentence += (currentSentence ? ' ' : '') + transcript;
         input.value = currentSentence;
         if (data.speech_final) {
-          sendMessage();
           currentSentence = '';
         }
       } else if (!data.is_final && transcript) {

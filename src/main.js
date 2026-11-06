@@ -223,7 +223,11 @@ function createOverlay() {
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: true,
-    focusable: true,
+    // focusable:false => the overlay never becomes the OS foreground window.
+    // Clicking it still works (mouse messages are delivered), but the other
+    // app keeps foreground focus, so it never receives a blur event.
+    focusable: false,
+    show: false,
     hasShadow: false,
     webPreferences: {
       nodeIntegration: true,
@@ -234,7 +238,8 @@ function createOverlay() {
 
   overlayWin.setContentProtection(true);
   overlayWin.setAlwaysOnTop(true, 'screen-saver', 1);
-  overlayWin.setOpacity(settings.opacity || 0.92);
+  currentOpacity = settings.opacity || 0.92;
+  overlayWin.setOpacity(currentOpacity);
   overlayWin.loadFile(path.join(__dirname, 'overlay.html'));
 
   overlayWin.on('moved', () => {
@@ -246,15 +251,64 @@ function createOverlay() {
     saveSettings({ ...loadSettings(), overlayWidth: w, overlayHeight: h });
   });
 
-  // Hide overlay after it fully loads (webContents ready for IPC) — shows on interview start
+  // Release the temporary focus we took for typing as soon as focus leaves.
+  overlayWin.on('blur', () => setOverlayFocusable(false));
+
+  // The window is created with show:false, so it is already hidden here.
+  // Do NOT call hide() on it: a hide -> show cycle leaves a non-activating
+  // window without mouse input.
   overlayWin.webContents.on('did-finish-load', () => {
-    overlayWin.hide();
+    safeSend(overlayWin, 'auto-send-state', lastAutoSendState);
     overlayVisible = false;
   });
 
   overlayWin.on('closed', () => {
     overlayWin = null;
   });
+}
+
+// ── FOCUS HYGIENE ──────────────────────────────────────────────────
+// The overlay is created non-activating so it can never become the OS
+// foreground window. Any app in front (meeting / assessment web page) keeps
+// foreground focus, so it never receives a window blur and never reports
+// "do not switch windows". Focus is only borrowed while the user is
+// actually typing in the overlay's follow-up box, and handed straight back.
+let overlayFocusable = false;
+
+function setOverlayFocusable(focusable) {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  if (overlayFocusable === focusable) return;
+  overlayFocusable = focusable;
+  try {
+    overlayWin.setFocusable(focusable);
+  } catch (e) {
+    console.warn('[Focus] setFocusable failed:', e.message);
+  }
+}
+
+function showOverlay() {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  overlayWin.setIgnoreMouseEvents(false);
+  overlayWin.setOpacity(currentOpacity);
+  overlayWin.showInactive();
+}
+
+// Hiding the overlay must NOT call hide(): a hide -> show cycle permanently
+// strips mouse input from a non-activating window, leaving every button dead.
+// Fading it out and letting clicks pass through keeps the window alive.
+function hideOverlay() {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  overlayWin.setIgnoreMouseEvents(true, { forward: true });
+  overlayWin.setOpacity(0);
+}
+
+function setOverlayVisible(visible) {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  overlayVisible = visible;
+  if (visible) showOverlay(); else hideOverlay();
+  if (controlWin && !controlWin.isDestroyed()) {
+    safeSend(controlWin, 'overlay-visibility', visible);
+  }
 }
 
 function createControl() {
@@ -267,6 +321,10 @@ function createControl() {
     transparent: false,
     skipTaskbar: false,
     resizable: true,
+    // Created hidden and shown without activation: launching the app must not
+    // pull the foreground away from a browser page (a page that is in an
+    // assessment treats losing focus as "the candidate switched away").
+    show: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -283,6 +341,15 @@ function createControl() {
 
   controlWin.loadFile(path.join(__dirname, 'control.html'));
 
+  controlWin.once('ready-to-show', () => {
+    if (!controlWin || controlWin.isDestroyed()) return;
+    // Show without activating (so a browser page in front keeps focus) but
+    // still bring the panel to the front so it is not hidden behind other
+    // windows.
+    controlWin.showInactive();
+    try { controlWin.moveTop(); } catch (e) { /* not supported on this platform */ }
+  });
+
   controlWin.on('closed', () => {
     controlWin = null;
     if (overlayWin && !overlayWin.isDestroyed()) overlayWin.close();
@@ -292,29 +359,38 @@ function createControl() {
 
 app.setName('AMD Audio Service');
 
-app.whenReady().then(() => {
-  // Grant permissions at default session level too
-  session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => {
-    callback(true);
+// Only one instance may run: a second copy would fight over the global
+// hotkeys (Alt+A / Alt+H / ...) and leave two overlapping control windows,
+// which reads as "the app is not responding".
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (controlWin && !controlWin.isDestroyed()) {
+      if (controlWin.savedBounds) controlWin.setBounds(controlWin.savedBounds);
+      controlWin.setSkipTaskbar(false);
+      controlWin.show();
+      controlWin.focus();
+    }
   });
-  session.defaultSession.setPermissionCheckHandler(() => true);
 
-  createOverlay();
-  createControl();
-  registerShortcuts();
-});
+  app.whenReady().then(() => {
+    // Grant permissions at default session level too
+    session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => {
+      callback(true);
+    });
+    session.defaultSession.setPermissionCheckHandler(() => true);
+
+    createOverlay();
+    createControl();
+    registerShortcuts();
+  });
+}
 
 function toggleOverlayVisibility() {
   if (!overlayWin) return;
-  overlayVisible = !overlayVisible;
-  if (overlayVisible) {
-    overlayWin.show();
-  } else {
-    overlayWin.hide();
-  }
-  if (controlWin && !controlWin.isDestroyed()) {
-    safeSend(controlWin, 'overlay-visibility', overlayVisible);
-  }
+  setOverlayVisible(!overlayVisible);
 }
 
 function toggleControlPanel() {
@@ -330,8 +406,7 @@ function toggleControlPanel() {
       controlWin.setSkipTaskbar(true);
 
       if (overlayWin && !overlayWin.isDestroyed()) {
-        overlayWin.show();
-        overlayWin.focus();
+        showOverlay();
         overlayVisible = true;
       }
     } else {
@@ -341,8 +416,8 @@ function toggleControlPanel() {
         : { width: 440, height: 720, x: 80, y: 80 };
       controlWin.setBounds(targetBounds);
       controlWin.setSkipTaskbar(false);
-      controlWin.show();
-      controlWin.focus();
+      // showInactive: appear without pulling focus away from the other app
+      controlWin.showInactive();
     }
   } else {
     createControl();
@@ -367,6 +442,33 @@ ipcMain.on('force-trigger-answer', () => safeSend(controlWin, 'force-trigger-ans
 ipcMain.on('switch-overlay-model', (_, data) => safeSend(controlWin, 'switch-overlay-model', data));
 ipcMain.on('sync-active-model', (_, data) => safeSend(overlayWin, 'sync-active-model', data));
 
+// Pending-question confirm flow (Auto-send OFF)
+let lastAutoSendState = true;
+ipcMain.on('auto-send-state', (_, enabled) => {
+  lastAutoSendState = enabled !== false;
+  safeSend(overlayWin, 'auto-send-state', lastAutoSendState);
+});
+ipcMain.on('pending-question', (_, data) => safeSend(overlayWin, 'pending-question', data));
+ipcMain.on('pending-question-rejected', (_, data) => safeSend(overlayWin, 'pending-question-rejected', data));
+ipcMain.on('pending-question-cleared', () => safeSend(overlayWin, 'pending-question-cleared'));
+ipcMain.on('send-pending-question', () => safeSend(controlWin, 'send-pending-question'));
+ipcMain.on('discard-pending-question', () => safeSend(controlWin, 'discard-pending-question'));
+
+// Focus borrowing for the overlay's follow-up box. The overlay is normally
+// non-activating; the renderer asks for keyboard focus only when the user
+// starts typing, and gives it back as soon as the text is sent or focus moves
+// away.
+ipcMain.on('overlay-request-focus', () => {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  setOverlayFocusable(true);
+  overlayWin.focus();
+});
+ipcMain.on('overlay-release-focus', () => {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  setOverlayFocusable(false);
+});
+
+
 function registerShortcuts() {
   globalShortcut.unregisterAll();
 
@@ -383,11 +485,12 @@ function registerShortcuts() {
   // Focus Overlay Input (Alt+C)
   safeRegisterShortcut('Alt+C', () => {
     if (overlayWin && !overlayWin.isDestroyed()) {
-      overlayWin.show();
+      setOverlayVisible(true);
+      // Typing needs keyboard focus: borrow it only for the duration of the
+      // typing session, then the overlay's blur handler gives it back.
+      setOverlayFocusable(true);
       overlayWin.focus();
       safeSend(overlayWin, 'focus-followup-input');
-      overlayVisible = true;
-      if (controlWin) safeSend(controlWin, 'overlay-visibility', true);
     }
   });
 
@@ -396,6 +499,7 @@ function registerShortcuts() {
     safeRegisterShortcut(key, () => {
       safeSend(overlayWin, 'answer-clear');
       safeSend(controlWin, 'abort-generation');
+      safeSend(controlWin, 'discard-pending-question');
     });
   });
 
@@ -417,7 +521,7 @@ function registerShortcuts() {
   safeRegisterShortcut('CommandOrControl+Shift+Up', () => {
     if (!overlayWin) return;
     currentOpacity = Math.min(1.0, currentOpacity + 0.08);
-    overlayWin.setOpacity(currentOpacity);
+    if (overlayVisible) overlayWin.setOpacity(currentOpacity);
     saveSettings({ ...loadSettings(), opacity: currentOpacity });
     if (controlWin) safeSend(controlWin, 'opacity-changed', Math.round(currentOpacity * 100));
   });
@@ -425,7 +529,7 @@ function registerShortcuts() {
   safeRegisterShortcut('CommandOrControl+Shift+Down', () => {
     if (!overlayWin) return;
     currentOpacity = Math.max(0.1, currentOpacity - 0.08);
-    overlayWin.setOpacity(currentOpacity);
+    if (overlayVisible) overlayWin.setOpacity(currentOpacity);
     saveSettings({ ...loadSettings(), opacity: currentOpacity });
     if (controlWin) safeSend(controlWin, 'opacity-changed', Math.round(currentOpacity * 100));
   });
@@ -495,19 +599,23 @@ ipcMain.on('force-trigger-answer', () => safeSend(controlWin, 'force-trigger-ans
 // Test AI Window IPC
 ipcMain.on('open-test-chat', () => {
   if (testChatWin) {
-    testChatWin.focus();
+    testChatWin.showInactive();
     return;
   }
   testChatWin = new BrowserWindow({
     width: 480,
     height: 600,
     frame: false,
+    show: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
     }
   });
   testChatWin.loadFile('src/test-chat.html');
+  testChatWin.once('ready-to-show', () => {
+    if (testChatWin && !testChatWin.isDestroyed()) testChatWin.showInactive();
+  });
   testChatWin.on('closed', () => { testChatWin = null; });
 });
 ipcMain.on('test-ai-request', (_, text) => safeSend(controlWin, 'test-ai-request', text));
@@ -519,7 +627,7 @@ ipcMain.on('test-ai-error', (_, err) => safeSend(testChatWin, 'test-ai-error', e
 ipcMain.on('set-opacity', (_, val) => {
   if (!overlayWin) return;
   currentOpacity = val;
-  overlayWin.setOpacity(val);
+  if (overlayVisible) overlayWin.setOpacity(val);
   saveSettings({ ...loadSettings(), opacity: val });
   safeSend(overlayWin, 'opacity-updated', val);
   safeSend(controlWin, 'opacity-updated', val);
@@ -527,9 +635,7 @@ ipcMain.on('set-opacity', (_, val) => {
 
 ipcMain.on('toggle-overlay', () => {
   if (!overlayWin) return;
-  overlayVisible = !overlayVisible;
-  overlayVisible ? overlayWin.show() : overlayWin.hide();
-  if (controlWin) safeSend(controlWin, 'overlay-visibility', overlayVisible);
+  setOverlayVisible(!overlayVisible);
 });
 
 ipcMain.on('set-control-taskbar', (_, skip) => {
@@ -566,17 +672,13 @@ ipcMain.on('set-ignore-mouse', (event, ignore) => {
 });
 ipcMain.on('show-overlay', () => {
   if (overlayWin) {
-    overlayWin.show();
-    overlayVisible = true;
-    safeSend(controlWin, 'overlay-visibility', true);
+    setOverlayVisible(true);
   }
 });
 
 ipcMain.on('hide-overlay', () => {
   if (overlayWin) {
-    overlayWin.hide();
-    overlayVisible = false;
-    safeSend(controlWin, 'overlay-visibility', false);
+    setOverlayVisible(false);
   }
 });
 
@@ -587,8 +689,9 @@ ipcMain.on('show-control-window', () => {
       : { width: 440, height: 720, x: 80, y: 80 };
     controlWin.setBounds(targetBounds);
     controlWin.setSkipTaskbar(false);
-    controlWin.show();
-    controlWin.focus();
+    // Appears without stealing foreground focus; a deliberate click by the
+    // user is what activates it.
+    controlWin.showInactive();
   }
 });
 
@@ -602,16 +705,14 @@ ipcMain.on('move-overlay-to-display', (_, displayIndex) => {
 
 ipcMain.on('end-session-from-overlay', () => {
   if (overlayWin) {
-    overlayWin.hide();
-    overlayVisible = false;
+    setOverlayVisible(false);
   }
   if (controlWin) {
     if (controlWin.savedBounds) {
       controlWin.setBounds(controlWin.savedBounds);
     }
     controlWin.setSkipTaskbar(false);
-    controlWin.show();
-    controlWin.focus();
+    controlWin.showInactive();
     safeSend(controlWin, 'end-session-remote');
   }
 });

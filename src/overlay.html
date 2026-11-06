@@ -96,6 +96,27 @@ body { background:transparent; font-family:'Segoe UI',sans-serif; overflow:hidde
   user-select: none;
 }
 
+.model-picker { position:relative; -webkit-app-region:no-drag; }
+.model-btn {
+  background: rgba(0,0,0,0.55); color: #4ade80; border: 1px solid rgba(29,158,117,0.45);
+  border-radius: 4px; font-size: 10px; font-weight: 600; padding: 2px 6px; outline: none;
+  cursor: pointer; font-family: 'Segoe UI',sans-serif; max-width: 160px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.model-btn:hover { filter: brightness(1.15); }
+.model-menu {
+  position: absolute; top: 22px; left: 0; min-width: 200px; z-index: 60;
+  background: rgba(8,10,14,0.97); border: 1px solid rgba(29,158,117,0.45);
+  border-radius: 6px; padding: 4px; flex-direction: column; gap: 2px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.65);
+}
+.model-item {
+  -webkit-app-region: no-drag; padding: 5px 8px; border-radius: 4px; cursor: pointer;
+  font-size: 11px; color: rgba(255,255,255,0.8); white-space: nowrap;
+}
+.model-item:hover { background: rgba(29,158,117,0.18); color: #fff; }
+.model-item.active { background: rgba(29,158,117,0.28); color: #4ade80; font-weight: 600; }
+
 
 .chat-container {
   flex:1;
@@ -247,6 +268,44 @@ strong { font-weight:600; color:var(--accent); }
 .end-btn:hover { background:rgba(240,100,100,0.25); color:#f09595; }
 .capture-btn:hover, .mic-toggle-btn:hover { background:rgba(29,158,117,0.25); color:#1D9E75; }
 
+.pending-panel {
+  -webkit-app-region:no-drag;
+  padding:8px 10px 9px;
+  background:linear-gradient(180deg, rgba(239,159,39,0.16), rgba(0,0,0,0.42));
+  border-top:1px solid rgba(239,159,39,0.45);
+  box-shadow:inset 3px 0 0 #fbbf24;
+  animation:pendingIn 0.18s ease-out;
+}
+@keyframes pendingIn { from{opacity:0; transform:translateY(5px)} to{opacity:1; transform:none} }
+.pending-head { display:flex; align-items:center; gap:6px; margin-bottom:5px; }
+.pending-dot { width:7px; height:7px; border-radius:50%; background:#fbbf24; animation:p 1.2s infinite; }
+.pending-title { font-size:10px; font-weight:700; letter-spacing:0.5px; color:#fbbf24; text-transform:uppercase; }
+.pending-text {
+  font-size:11.5px; color:var(--text); line-height:1.4; white-space:pre-wrap;
+  max-height:72px; overflow-y:auto; margin-bottom:8px;
+}
+.pending-actions { display:flex; gap:8px; }
+.pending-answer, .pending-reject {
+  flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
+  padding:7px 10px; border-radius:6px; cursor:pointer;
+  font-size:11.5px; font-weight:700; letter-spacing:0.3px;
+  font-family:'Segoe UI',sans-serif; transition:all 0.15s;
+}
+.pending-answer {
+  background:linear-gradient(180deg,#1D9E75,#0F6E56);
+  color:#fff; border:1px solid #22c55e;
+  box-shadow:0 2px 10px rgba(29,158,117,0.4);
+}
+.pending-answer:hover { filter:brightness(1.12); box-shadow:0 2px 14px rgba(29,158,117,0.6); }
+.pending-reject {
+  background:rgba(255,255,255,0.06); color:#f09595;
+  border:1px solid rgba(240,100,100,0.45);
+}
+.pending-reject:hover { background:rgba(240,100,100,0.18); }
+.pending-answer kbd, .pending-reject kbd {
+  background:rgba(0,0,0,0.3); padding:1px 5px; border-radius:3px;
+  font-family:monospace; font-size:9px; font-weight:600; opacity:0.85;
+}
 
 .resize-grip {
   position:absolute;
@@ -298,16 +357,10 @@ strong { font-weight:600; color:var(--accent); }
       <span class="brand" style="cursor: move;">InterviewAI Pro</span>
       
       <!-- Live In-Interview Model Quick-Switcher (Alt+M or Click) -->
-      <select id="overlayModelSelect" class="overlay-model-select" onchange="changeOverlayModel(this.value)" title="Switch AI Model on the fly during interview (Alt+M)" style="-webkit-app-region: no-drag; background: rgba(0,0,0,0.55); color: #4ade80; border: 1px solid rgba(29,158,117,0.45); border-radius: 4px; font-size: 10px; font-weight: 600; padding: 2px 6px; outline: none; cursor: pointer; margin-left: 6px;">
-        <option value="gemini2:gemini-3.8-flash">🟢 Gemini 3.8 Flash</option>
-        <option value="chatgpt:gpt-6-luna">⚡ GPT-6 Luna</option>
-        <option value="deepseek:deepseek-reasoner">🧠 DeepSeek Reasoner</option>
-        <option value="deepseek:deepseek-flash">🔷 DeepSeek 4.1 Flash (1017)</option>
-
-        <option value="deepseek:deepseek-v4-pro">🔷 DeepSeek V4 Pro</option>
-        <option value="groq:qwen/qwen3.8-27b">⚡ Groq (Qwen 3.8)</option>
-        <option value="gemini:gemini-3.5-flash-lite">🟢 Gemini 3.5 Lite</option>
-      </select>
+      <div class="model-picker" id="modelPicker">
+        <button class="model-btn" id="overlayModelSelect" onclick="toggleModelMenu()" title="Switch AI Model on the fly during interview (Alt+M)">🟢 Gemini 3.8 Flash</button>
+        <div class="model-menu" id="modelMenu" style="display:none;"></div>
+      </div>
 
       <div class="opacity-ctrl" title="Adjust Overlay Opacity (20% - 100%)">
         <span style="font-size: 10px; color: var(--text-dim); user-select:none;">☀️</span>
@@ -330,6 +383,22 @@ strong { font-weight:600; color:var(--accent); }
     </div>
   </div>
 
+  <div id="pendingBar" class="pending-panel" style="display:none;">
+    <div class="pending-head">
+      <span class="pending-dot" id="pendingDot"></span>
+      <span class="pending-title" id="pendingTitle">Question captured</span>
+    </div>
+    <div id="pendingText" class="pending-text"></div>
+    <div class="pending-actions">
+      <button id="pendingAnswerBtn" class="pending-answer" onclick="sendPendingQuestion()" title="Send this question to the AI now">
+        ✋ Answer <kbd>Alt+A</kbd>
+      </button>
+      <button id="pendingRejectBtn" class="pending-reject" onclick="discardPendingQuestion()" title="Do not send this question">
+        ↩ Reject <kbd>Alt+X</kbd>
+      </button>
+    </div>
+  </div>
+
   <div class="followup-bar" style="display:flex; padding: 6px 10px; background: rgba(0,0,0,0.4); border-top: 1px solid var(--border); gap: 6px; -webkit-app-region:no-drag;">
     <input type="text" id="followUpInput" placeholder="Type a follow-up question..." style="flex:1; background: var(--bg); color: var(--text); border: 1px solid rgba(29,158,117,0.3); border-radius: 4px; padding: 4px 8px; font-size: 11px; outline: none; font-family:'Segoe UI',sans-serif;" onkeydown="if(event.key==='Enter') sendFollowUp()">
     <button onclick="sendFollowUp()" style="background: var(--accent); color: #fff; border: none; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px; font-family:'Segoe UI',sans-serif; transition: background 0.15s;" onmouseover="this.style.background='var(--accent2)'" onmouseout="this.style.background='var(--accent)'">Ask</button>
@@ -337,13 +406,11 @@ strong { font-weight:600; color:var(--accent); }
   <div class="bottom-bar">
     <span class="hint-text" id="qCount">0 Q&amp;As</span>
     <div class="hint-keys">
-      <button class="mic-toggle-btn" id="overlayMicBtn" onclick="toggleMic()">🎤 Mic: ON</button>
       <button class="capture-btn" id="overlayCaptureBtn" onclick="captureScreen()" title="Single-shot capture (instant answer)">📸 Screen</button>
       <button class="capture-btn" id="multiCaptureBtn" onclick="captureMultiPart()" title="Add screenshot part (scroll and capture multiple parts)">📸+ Part</button>
       <button class="capture-btn" id="solveMultiBtn" onclick="solveMultiParts()" style="display:none; background: #16a34a; border-color: #22c55e; color: #fff; font-weight: bold;" title="Send all captured parts to AI">⚡ Solve (0)</button>
       <button class="capture-btn" id="clearMultiBtn" onclick="clearMultiParts()" style="display:none; color: #ef4444; padding: 2px 6px;" title="Discard queued screenshot parts">✕</button>
       <button class="capture-btn" id="overlayFollowUpBtn" onclick="toggleFollowUpOverlay()">🔁 Follow-up: OFF</button>
-      <button class="capture-btn" id="longQBtn" onclick="toggleLongQ()">⏱ Long Q: OFF</button>
       <button class="capture-btn" id="autoScrollBtn" onclick="toggleAutoScroll()" title="Toggle Auto Scroll">⏬ Scroll: ON</button>
       <button class="end-btn" onclick="endSession()">❌ End</button>
     </div>
@@ -371,13 +438,72 @@ function showOverlayToast(text) {
   }
 }
 
+const OVERLAY_MODELS = [
+  { value: 'gemini2:gemini-3.8-flash', label: '🟢 Gemini 3.8 Flash' },
+  { value: 'chatgpt:gpt-6-luna', label: '⚡ GPT-6 Luna' },
+  { value: 'deepseek:deepseek-reasoner', label: '🧠 DeepSeek Reasoner' },
+  { value: 'deepseek:deepseek-flash', label: '🔷 DeepSeek 4.1 Flash (1017)' },
+  { value: 'deepseek:deepseek-v4-pro', label: '🔷 DeepSeek V4 Pro' },
+  { value: 'groq:qwen/qwen3.8-27b', label: '⚡ Groq (Qwen 3.8)' },
+  { value: 'gemini:gemini-3.5-flash-lite', label: '🟢 Gemini 3.5 Lite' }
+];
+let currentOverlayModel = OVERLAY_MODELS[0].value;
+
+// The overlay window is non-activating, so a native <select> popup cannot
+// open (it needs an active owner). This in-DOM menu works without activation.
+function buildModelMenu() {
+  const menu = $('modelMenu');
+  if (!menu) return;
+  menu.innerHTML = '';
+  OVERLAY_MODELS.forEach(m => {
+    const item = document.createElement('div');
+    item.className = 'model-item' + (m.value === currentOverlayModel ? ' active' : '');
+    item.textContent = m.label;
+    item.onclick = () => {
+      currentOverlayModel = m.value;
+      const btn = $('overlayModelSelect');
+      if (btn) btn.textContent = m.label;
+      toggleModelMenu();
+      changeOverlayModel(m.value);
+    };
+    menu.appendChild(item);
+  });
+}
+
+function toggleModelMenu() {
+  const menu = $('modelMenu');
+  if (!menu) return;
+  const isOpen = menu.style.display !== 'none';
+  if (isOpen) {
+    menu.style.display = 'none';
+  } else {
+    buildModelMenu();
+    menu.style.display = 'flex';
+  }
+}
+
+function setOverlayModel(value) {
+  const match = OVERLAY_MODELS.find(m => m.value === value);
+  if (!match) return;
+  currentOverlayModel = match.value;
+  const btn = $('overlayModelSelect');
+  if (btn) btn.textContent = match.label;
+  buildModelMenu();
+}
+
+document.addEventListener('click', (e) => {
+  const picker = $('modelPicker');
+  const menu = $('modelMenu');
+  if (!picker || !menu) return;
+  if (!picker.contains(e.target)) menu.style.display = 'none';
+});
+
 function changeOverlayModel(val) {
   if (!val) return;
   const [provider, model] = val.split(':');
   ipcRenderer.send('switch-overlay-model', { provider, model });
-  const sel = $('overlayModelSelect');
-  const label = sel ? sel.options[sel.selectedIndex].text : model;
-  showOverlayToast('⚡ ' + label);
+  const match = OVERLAY_MODELS.find(m => m.value === val);
+  showOverlayToast('⚡ ' + (match ? match.label : model));
 }
 
 ipcRenderer.on('screenshot-saved', (_, { filename }) => {
@@ -387,27 +513,20 @@ ipcRenderer.on('screenshot-saved', (_, { filename }) => {
 ipcRenderer.on('sync-active-model', (_, data) => {
   if (!data) return;
   const { provider, model } = data;
-  const sel = $('overlayModelSelect');
-  if (sel) {
-    const targetVal = `${provider}:${model}`;
-    for (let i = 0; i < sel.options.length; i++) {
-      if (sel.options[i].value === targetVal || sel.options[i].value.startsWith(provider + ':')) {
-        sel.value = sel.options[i].value;
-        break;
-      }
-    }
-  }
+  const targetVal = `${provider}:${model}`;
+  const match = OVERLAY_MODELS.find(m => m.value === targetVal)
+    || OVERLAY_MODELS.find(m => m.value.startsWith(provider + ':'));
+  if (match) setOverlayModel(match.value);
 });
 
 // Alt+M hotkey to cycle models silently during interview
 window.addEventListener('keydown', (e) => {
   if (e.altKey && (e.key === 'm' || e.key === 'M')) {
     e.preventDefault();
-    const sel = $('overlayModelSelect');
-    if (sel && sel.options.length > 0) {
-      sel.selectedIndex = (sel.selectedIndex + 1) % sel.options.length;
-      changeOverlayModel(sel.value);
-    }
+    const idx = OVERLAY_MODELS.findIndex(m => m.value === currentOverlayModel);
+    const next = OVERLAY_MODELS[(idx + 1) % OVERLAY_MODELS.length];
+    setOverlayModel(next.value);
+    changeOverlayModel(next.value);
   } else if (e.altKey && (e.key === 'p' || e.key === 'P')) {
     e.preventDefault();
     captureMultiPart();
@@ -478,7 +597,6 @@ function clearOverlayChat() {
   ipcRenderer.send('answer-clear');
   ipcRenderer.send('abort-generation');
 }
-function toggleMic() { ipcRenderer.send('toggle-mic-from-overlay'); }
 function toggleFollowUpOverlay() { ipcRenderer.send('toggle-followup-from-overlay'); }
 function captureScreen() { 
   $('st').textContent = 'Capturing screen...';
@@ -538,6 +656,17 @@ ipcRenderer.on('focus-followup-input', () => {
   }
 });
 
+// The overlay window is non-activating: a click into the text box does not
+// hand it keyboard focus on its own. Borrow focus from the main process for
+// exactly as long as the user is typing, then give it back.
+$('followUpInput').addEventListener('mousedown', () => {
+  ipcRenderer.send('overlay-request-focus');
+  setTimeout(() => {
+    const input = $('followUpInput');
+    if (input) input.focus();
+  }, 40);
+});
+
 ipcRenderer.on('followup-state-changed', (_, state) => {
   const btn = $('overlayFollowUpBtn');
   if (btn) {
@@ -549,25 +678,81 @@ ipcRenderer.on('followup-state-changed', (_, state) => {
 });
 
 ipcRenderer.on('mic-state-changed', (_, isListening) => {
-  const btn = $('overlayMicBtn');
-  if (btn) {
-    btn.textContent = isListening ? '🎤 Mic: ON' : '🎤 Mic: OFF';
-    btn.style.opacity = isListening ? '1' : '0.5';
+  $('st').textContent = isListening ? 'Listening…' : 'Mic off';
+});
+
+let pendingCommitted = '';
+let autoSendOff = false;
+ipcRenderer.invoke('get-settings').then(s => {
+  if (s && s.autoSend !== undefined) autoSendOff = s.autoSend === false;
+}).catch(() => {});
+
+function renderPendingPanel(state, text) {
+  const bar = $('pendingBar');
+  const txt = $('pendingText');
+  const title = $('pendingTitle');
+  if (!bar) return;
+  if (!state) {
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = 'block';
+  if (txt) txt.textContent = text || '';
+  if (title) title.textContent = state === 'live' ? 'Question in progress' : 'Question captured';
+}
+
+function appendRejectedQuestion(text) {
+  if (!text) return;
+  const idleEl = $('idle');
+  if (idleEl) hide(idleEl);
+  if (currentInterviewerPair) currentInterviewerPair = null;
+  const row = document.createElement('div');
+  row.className = 'chat-pair';
+  row.innerHTML = '<div class="bubble bubble-q" style="border-color:rgba(240,100,100,0.35); background:rgba(240,100,100,0.07); opacity:0.8;"><div class="bubble-label" style="color:#f09595">✕ Rejected — not sent</div><div class="bubble-content" style="color:#e3c4c4"></div></div>';
+  row.querySelector('.bubble-content').textContent = text;
+  $('chatContainer').appendChild(row);
+  scrollToBottom();
+}
+
+function sendPendingQuestion() {
+  ipcRenderer.send('send-pending-question');
+}
+
+function discardPendingQuestion() {
+  ipcRenderer.send('discard-pending-question');
+  pendingCommitted = '';
+  renderPendingPanel(null);
+}
+
+ipcRenderer.on('auto-send-state', (_, enabled) => {
+  autoSendOff = !enabled;
+  if (!autoSendOff) {
+    pendingCommitted = '';
+    renderPendingPanel(null);
   }
 });
 
-let isLongQ = false;
-function toggleLongQ() {
-  ipcRenderer.send('toggle-long-q-from-overlay');
-}
-ipcRenderer.on('long-q-state-changed', (_, state) => {
-  isLongQ = state;
-  const btn = $('longQBtn');
-  if (btn) {
-    btn.textContent = isLongQ ? '⏱ Long Q: ON' : '⏱ Long Q: OFF';
-    btn.style.color = isLongQ ? '#F09595' : 'inherit';
-    btn.style.borderColor = isLongQ ? '#F09595' : 'rgba(29,158,117,0.5)';
+ipcRenderer.on('pending-question', (_, data) => {
+  pendingCommitted = (data && data.text) || '';
+  renderPendingPanel('captured', pendingCommitted);
+  showOverlayToast('⏸ Question captured — Answer (Alt+A) or Reject (Alt+X)');
+});
+
+ipcRenderer.on('pending-question-rejected', (_, data) => {
+  const text = (data && data.text) || '';
+  pendingCommitted = '';
+  renderPendingPanel(null);
+  // The rejected card replaces the live interim bubble so the question isn't shown twice
+  if (currentInterviewerPair) {
+    currentInterviewerPair.remove();
+    currentInterviewerPair = null;
   }
+  appendRejectedQuestion(text);
+});
+
+ipcRenderer.on('pending-question-cleared', () => {
+  pendingCommitted = '';
+  renderPendingPanel(null);
 });
 
 function scrollToBottom() {
@@ -703,6 +888,12 @@ let currentInterviewerPair = null;
 // 
 // 🎙️ Interviewer Speech (Meeting / Zoom / Teams)
 ipcRenderer.on('interviewer-interim', (_, text) => {
+  if (autoSendOff && text && text.trim().length > 2) {
+    const live = text.trim();
+    if (!(pendingCommitted && pendingCommitted.includes(live))) {
+      renderPendingPanel('live', [pendingCommitted, live].filter(Boolean).join('\n'));
+    }
+  }
   const idleEl = $('idle');
   if (idleEl) hide(idleEl);
 
@@ -890,6 +1081,8 @@ function sendFollowUp() {
     ipcRenderer.send('ask-followup', q);
     input.value = '';
     $('st').textContent = 'Generating answer…';
+    // Hand keyboard focus back to whatever app was in front
+    ipcRenderer.send('overlay-release-focus');
   }
 }
 
