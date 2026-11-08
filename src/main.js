@@ -51,6 +51,7 @@ let controlWin = null;
 let testChatWin = null;
 let currentOpacity = 0.92;
 let overlayVisible = true;
+let antiTabSwitchShield = true; // Solution C: Strict non-activating overlay
 
 const userDataPath = app.getPath('userData');
 const settingsFile = path.join(userDataPath, 'settings.json');
@@ -212,6 +213,9 @@ async function extractReferenceFile(filePath) {
 function createOverlay() {
   const { width } = screen.getPrimaryDisplay().workAreaSize;
   const settings = loadSettings();
+  if (settings.antiTabSwitchShield !== undefined) {
+    antiTabSwitchShield = !!settings.antiTabSwitchShield;
+  }
 
   overlayWin = new BrowserWindow({
     width: settings.overlayWidth || 440,
@@ -223,6 +227,7 @@ function createOverlay() {
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: true,
+    type: 'toolbar', // Tool window prevents Windows from treating overlay as active foreground app
     // focusable:false => the overlay never becomes the OS foreground window.
     // Clicking it still works (mouse messages are delivered), but the other
     // app keeps foreground focus, so it never receives a blur event.
@@ -254,11 +259,20 @@ function createOverlay() {
   // Release the temporary focus we took for typing as soon as focus leaves.
   overlayWin.on('blur', () => setOverlayFocusable(false));
 
+  // If Anti-Tab Switch Shield is ON, immediately blur if OS ever focuses this window
+  overlayWin.on('focus', () => {
+    if (antiTabSwitchShield) {
+      setOverlayFocusable(false);
+      try { overlayWin.blur(); } catch (e) {}
+    }
+  });
+
   // The window is created with show:false, so it is already hidden here.
   // Do NOT call hide() on it: a hide -> show cycle leaves a non-activating
   // window without mouse input.
   overlayWin.webContents.on('did-finish-load', () => {
     safeSend(overlayWin, 'auto-send-state', lastAutoSendState);
+    safeSend(overlayWin, 'anti-tab-shield-state', antiTabSwitchShield);
     overlayVisible = false;
   });
 
@@ -277,6 +291,10 @@ let overlayFocusable = false;
 
 function setOverlayFocusable(focusable) {
   if (!overlayWin || overlayWin.isDestroyed()) return;
+  // Solution C: If Anti-Tab Switch Shield is active, refuse to make window focusable
+  if (antiTabSwitchShield && focusable) {
+    focusable = false;
+  }
   if (overlayFocusable === focusable) return;
   overlayFocusable = focusable;
   try {
@@ -285,6 +303,27 @@ function setOverlayFocusable(focusable) {
     console.warn('[Focus] setFocusable failed:', e.message);
   }
 }
+
+function toggleAntiTabShield(forcedVal) {
+  antiTabSwitchShield = typeof forcedVal === 'boolean' ? forcedVal : !antiTabSwitchShield;
+  saveSettings({ ...loadSettings(), antiTabSwitchShield });
+
+  if (antiTabSwitchShield) {
+    setOverlayFocusable(false);
+    if (overlayWin && !overlayWin.isDestroyed()) {
+      try { overlayWin.blur(); } catch (e) {}
+    }
+  }
+
+  safeSend(overlayWin, 'anti-tab-shield-state', antiTabSwitchShield);
+  safeSend(controlWin, 'anti-tab-shield-state', antiTabSwitchShield);
+  console.log('[Anti-Tab Switch Shield] State changed to:', antiTabSwitchShield ? 'ON (Safe Mode)' : 'OFF (Normal Mode)');
+}
+
+ipcMain.on('toggle-anti-tab-shield', (_, val) => {
+  toggleAntiTabShield(val);
+});
+ipcMain.handle('get-anti-tab-shield-state', () => antiTabSwitchShield);
 
 function showOverlay() {
   if (!overlayWin || overlayWin.isDestroyed()) return;
@@ -460,6 +499,12 @@ ipcMain.on('discard-pending-question', () => safeSend(controlWin, 'discard-pendi
 // away.
 ipcMain.on('overlay-request-focus', () => {
   if (!overlayWin || overlayWin.isDestroyed()) return;
+  if (antiTabSwitchShield) {
+    safeSend(overlayWin, 'anti-tab-shield-alert', {
+      message: '🛡️ Anti-Tab Switch Shield is ON: Focus borrowing blocked to protect test tab. Press Alt+T to turn Shield OFF to type.'
+    });
+    return;
+  }
   setOverlayFocusable(true);
   overlayWin.focus();
 });
@@ -486,11 +531,27 @@ function registerShortcuts() {
   safeRegisterShortcut('Alt+C', () => {
     if (overlayWin && !overlayWin.isDestroyed()) {
       setOverlayVisible(true);
-      // Typing needs keyboard focus: borrow it only for the duration of the
-      // typing session, then the overlay's blur handler gives it back.
+      if (antiTabSwitchShield) {
+        safeSend(overlayWin, 'anti-tab-shield-alert', {
+          message: '🛡️ Anti-Tab Switch Shield is ON: Focus borrowing blocked. Press Alt+T to turn Shield OFF to type.'
+        });
+        return;
+      }
       setOverlayFocusable(true);
       overlayWin.focus();
       safeSend(overlayWin, 'focus-followup-input');
+    }
+  });
+
+  // Toggle Anti-Tab Switch Shield (Alt+T)
+  safeRegisterShortcut('Alt+T', () => {
+    toggleAntiTabShield();
+  });
+
+  // Capture Multi-Part Screenshot (Alt+P)
+  safeRegisterShortcut('Alt+P', () => {
+    if (overlayWin && !overlayWin.isDestroyed()) {
+      safeSend(overlayWin, 'trigger-multi-capture');
     }
   });
 

@@ -544,10 +544,23 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
       <div class="kbd-grid">
         <div class="kbd-item"><kbd>Ctrl+Shift+H</kbd><span class="klabel">Hide/show overlay</span></div>
         <div class="kbd-item"><kbd>Ctrl+Shift+C</kbd><span class="klabel">Focus controls</span></div>
+        <div class="kbd-item"><kbd>Alt+T</kbd><span class="klabel">Toggle Anti-Tab Shield</span></div>
+        <div class="kbd-item"><kbd>Alt+P</kbd><span class="klabel">Add Screenshot Part</span></div>
+        <div class="kbd-item"><kbd>Alt+S</kbd><span class="klabel">Solve Multi-Part</span></div>
         <div class="kbd-item"><kbd>Ctrl+Shift+↑</kbd><span class="klabel">Opacity up</span></div>
         <div class="kbd-item"><kbd>Ctrl+Shift+↓</kbd><span class="klabel">Opacity down</span></div>
         <div class="kbd-item"><kbd>Ctrl+Shift+←</kbd><span class="klabel">Move left</span></div>
         <div class="kbd-item"><kbd>Ctrl+Shift+→</kbd><span class="klabel">Move right</span></div>
+      </div>
+    </div>
+    <div class="sec">
+      <div class="lbl">Anti-Tab Switch Shield (Exam / Assessment Mode)</div>
+      <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg3); padding:10px 12px; border-radius:8px; border:1px solid var(--border);">
+        <div style="flex:1; padding-right:12px;">
+          <div style="font-size:12px; font-weight:600; color:var(--text1);">🛡️ Strict Non-Activating Overlay</div>
+          <div style="font-size:11px; color:var(--text3); margin-top:2px;">Prevents HackerRank, Mettl, and other exam websites from detecting clicks on the overlay as tab switches. Overlay never steals browser focus. (<kbd>Alt+T</kbd>)</div>
+        </div>
+        <button id="ctrlShieldToggleBtn" class="pill active" style="min-width:75px; text-align:center; cursor:pointer;" onclick="toggleControlShield()">🛡️ ON</button>
       </div>
     </div>
     <div class="sec">
@@ -1335,6 +1348,11 @@ async function mockAskQuestion(question, isTest = false) {
   }
   if ($('practiceModeToggle') && s.practiceMode !== undefined) {
     $('practiceModeToggle').checked = !!s.practiceMode;
+  }
+  if (s.antiTabSwitchShield !== undefined) {
+    updateControlShieldUI(!!s.antiTabSwitchShield);
+  } else {
+    updateControlShieldUI(true);
   }
   const autoSendEl = $('autoSendToggle');
   if (autoSendEl) autoSendEl.checked = window.autoSendEnabled;
@@ -4082,6 +4100,27 @@ function setTheme(el, theme) {
 function moveToDisplay(index) {
   ipcRenderer.send('move-overlay-to-display', parseInt(index));
 }
+
+let antiTabShieldActive = true;
+
+function toggleControlShield() {
+  ipcRenderer.send('toggle-anti-tab-shield');
+}
+
+function updateControlShieldUI(active) {
+  antiTabShieldActive = !!active;
+  const btn = $('ctrlShieldToggleBtn');
+  if (btn) {
+    btn.textContent = active ? '🛡️ ON' : '🛡️ OFF';
+    btn.className = 'pill ' + (active ? 'active' : '');
+    btn.style.color = active ? 'var(--accent)' : 'var(--text3)';
+    btn.style.borderColor = active ? 'var(--accent)' : 'var(--border2)';
+  }
+}
+
+ipcRenderer.on('anti-tab-shield-state', (_, active) => {
+  updateControlShieldUI(!!active);
+});
 
 // ── USAGE ─────────────────────────────────────────────────
 function updateUsage() {

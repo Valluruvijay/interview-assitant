@@ -412,6 +412,7 @@ strong { font-weight:600; color:var(--accent); }
       <button class="capture-btn" id="clearMultiBtn" onclick="clearMultiParts()" style="display:none; color: #ef4444; padding: 2px 6px;" title="Discard queued screenshot parts">✕</button>
       <button class="capture-btn" id="overlayFollowUpBtn" onclick="toggleFollowUpOverlay()">🔁 Follow-up: OFF</button>
       <button class="capture-btn" id="autoScrollBtn" onclick="toggleAutoScroll()" title="Toggle Auto Scroll">⏬ Scroll: ON</button>
+      <button class="capture-btn" id="shieldToggleBtn" onclick="toggleShieldFromOverlay()" title="Anti-Tab Switch Shield (Alt+T): Prevents exam websites from detecting clicks on overlay as tab changes" style="border-color: rgba(34, 197, 94, 0.4); color: #22c55e;">🛡️ Shield: ON</button>
       <button class="end-btn" onclick="endSession()">❌ End</button>
     </div>
   </div>
@@ -659,7 +660,62 @@ ipcRenderer.on('focus-followup-input', () => {
 // The overlay window is non-activating: a click into the text box does not
 // hand it keyboard focus on its own. Borrow focus from the main process for
 // exactly as long as the user is typing, then give it back.
+let antiTabShieldActive = true;
+
+function toggleShieldFromOverlay() {
+  ipcRenderer.send('toggle-anti-tab-shield');
+}
+
+function updateShieldUI(active) {
+  antiTabShieldActive = !!active;
+  const btn = $('shieldToggleBtn');
+  const input = $('followUpInput');
+  if (btn) {
+    if (antiTabShieldActive) {
+      btn.textContent = '🛡️ Shield: ON';
+      btn.style.color = '#22c55e';
+      btn.style.borderColor = 'rgba(34, 197, 94, 0.4)';
+      btn.title = 'Anti-Tab Switch Shield is ON (Safe Mode: clicks never steal browser focus). Click or press Alt+T to toggle.';
+    } else {
+      btn.textContent = '🛡️ Shield: OFF';
+      btn.style.color = '#eab308';
+      btn.style.borderColor = 'rgba(234, 179, 8, 0.4)';
+      btn.title = 'Anti-Tab Switch Shield is OFF (Normal Mode: focus borrowing allowed). Click or press Alt+T to toggle.';
+    }
+  }
+  if (input) {
+    if (antiTabShieldActive) {
+      input.placeholder = '🛡️ Shield ON (clicks won\'t blur test tab). Press Alt+T to enable typing...';
+    } else {
+      input.placeholder = 'Type a follow-up question...';
+    }
+  }
+}
+
+ipcRenderer.on('anti-tab-shield-state', (_, isShieldActive) => {
+  updateShieldUI(isShieldActive);
+  showOverlayToast(antiTabShieldActive ? '🛡️ Shield: ON (Anti-Tab Switch Active)' : '🛡️ Shield: OFF (Normal Mode)');
+});
+
+ipcRenderer.on('anti-tab-shield-alert', (_, data) => {
+  showOverlayToast(data.message || '🛡️ Focus blocked by Shield');
+});
+
+ipcRenderer.on('trigger-multi-capture', () => {
+  captureMultiPart();
+});
+
+try {
+  ipcRenderer.invoke('get-anti-tab-shield-state').then(active => {
+    if (typeof active === 'boolean') updateShieldUI(active);
+  });
+} catch(e) {}
+
 $('followUpInput').addEventListener('mousedown', () => {
+  if (antiTabShieldActive) {
+    showOverlayToast('🛡️ Shield Active: Typing disabled to prevent tab blur. Press Alt+T to turn Shield OFF.');
+    return;
+  }
   ipcRenderer.send('overlay-request-focus');
   setTimeout(() => {
     const input = $('followUpInput');
@@ -1090,8 +1146,16 @@ window.addEventListener('keydown', e => {
   if (e.altKey && e.key.toLowerCase() === 'h') { ipcRenderer.send('toggle-overlay-visibility'); }
   if (e.altKey && e.key.toLowerCase() === 'c') { 
     e.preventDefault();
+    if (antiTabShieldActive) {
+      showOverlayToast('🛡️ Shield Active: Focus blocked. Press Alt+T to disable Shield to type.');
+      return;
+    }
     const input = $('followUpInput');
     if (input) input.focus();
+  }
+  if (e.altKey && e.key.toLowerCase() === 't') {
+    e.preventDefault();
+    toggleShieldFromOverlay();
   }
   if (e.altKey && e.key.toLowerCase() === 'a') { ipcRenderer.send('force-trigger-answer'); }
   if (e.altKey && e.key.toLowerCase() === 'x') { clearOverlayChat(); }
