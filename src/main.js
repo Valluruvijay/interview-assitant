@@ -227,7 +227,6 @@ function createOverlay() {
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: true,
-    type: 'toolbar', // Tool window prevents Windows from treating overlay as active foreground app
     // focusable:false => the overlay never becomes the OS foreground window.
     // Clicking it still works (mouse messages are delivered), but the other
     // app keeps foreground focus, so it never receives a blur event.
@@ -258,14 +257,6 @@ function createOverlay() {
 
   // Release the temporary focus we took for typing as soon as focus leaves.
   overlayWin.on('blur', () => setOverlayFocusable(false));
-
-  // If Anti-Tab Switch Shield is ON, immediately blur if OS ever focuses this window
-  overlayWin.on('focus', () => {
-    if (antiTabSwitchShield) {
-      setOverlayFocusable(false);
-      try { overlayWin.blur(); } catch (e) {}
-    }
-  });
 
   // The window is created with show:false, so it is already hidden here.
   // Do NOT call hide() on it: a hide -> show cycle leaves a non-activating
@@ -310,9 +301,6 @@ function toggleAntiTabShield(forcedVal) {
 
   if (antiTabSwitchShield) {
     setOverlayFocusable(false);
-    if (overlayWin && !overlayWin.isDestroyed()) {
-      try { overlayWin.blur(); } catch (e) {}
-    }
   }
 
   safeSend(overlayWin, 'anti-tab-shield-state', antiTabSwitchShield);
