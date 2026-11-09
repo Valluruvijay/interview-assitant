@@ -460,10 +460,14 @@
 
     // Check 3: document.hasFocus override
     try {
-      const descFocus = Object.getOwnPropertyDescriptor(document, 'hasFocus');
-      if (descFocus && descFocus.value && descFocus.value() === true) {
-        overridesFound++;
-        details.push('hasFocus()=true');
+      if (document.hasFocus && document.hasFocus() === true) {
+        const isCustom = document.hasOwnProperty('hasFocus') || 
+                         !document.hasFocus.toString().includes('[native code]') ||
+                         document.hasFocus.toString().includes('true');
+        if (isCustom) {
+          overridesFound++;
+          details.push('hasFocus()=true');
+        }
       }
     } catch(e) {}
 
