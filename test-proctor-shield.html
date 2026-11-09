@@ -217,7 +217,7 @@
     </div>
     <div class="header-actions">
       <label class="switch-label">
-        <input type="checkbox" id="audioToggle" checked> 🔊 Audio Alert on Leak
+        <input type="checkbox" id="audioToggle"> 🔇 Audio Alert (Uncheck to mute)
       </label>
       <button class="btn btn-danger" onclick="resetAll()">Reset Counters</button>
     </div>
@@ -571,6 +571,9 @@
   });
 
   // ── 6. ACTIVE POLLING (DOCUMENT.HASFOCUS & HIDDEN) ────────
+  let lastPolledFocus = true;
+  let lastPolledHidden = false;
+
   setInterval(() => {
     const hasFocus = document.hasFocus();
     pollEl.textContent = hasFocus ? 'TRUE' : 'FALSE';
@@ -580,23 +583,29 @@
     if (!hasFocus) {
       vPollFocus.className = 'vector-status status-leaked';
       vPollFocus.textContent = 'LEAK (FALSE)';
-      reportViolation('document.hasFocus()', 'Active polling returned FALSE');
+      if (lastPolledFocus !== false) {
+        reportViolation('document.hasFocus()', 'Active polling returned FALSE');
+      }
     } else {
       vPollFocus.className = 'vector-status status-shielded';
       vPollFocus.textContent = 'SHIELDED (TRUE)';
     }
+    lastPolledFocus = hasFocus;
 
     const isHidden = document.hidden;
     const vPollHidden = document.getElementById('v_poll_hidden');
     if (isHidden) {
       vPollHidden.className = 'vector-status status-leaked';
       vPollHidden.textContent = 'LEAK (TRUE)';
-      reportViolation('document.hidden', 'Active polling returned TRUE');
+      if (lastPolledHidden !== true) {
+        reportViolation('document.hidden', 'Active polling returned TRUE');
+      }
     } else {
       vPollHidden.className = 'vector-status status-shielded';
       vPollHidden.textContent = 'SHIELDED (FALSE)';
     }
-  }, 200);
+    lastPolledHidden = isHidden;
+  }, 300);
 
   // ── INTERACTIVE TEST HELPERS ─────────────────────────────
   function simulateNativeBlur() {
