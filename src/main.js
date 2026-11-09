@@ -370,11 +370,8 @@ function createControl() {
 
   controlWin.once('ready-to-show', () => {
     if (!controlWin || controlWin.isDestroyed()) return;
-    // Show without activating (so a browser page in front keeps focus) but
-    // still bring the panel to the front so it is not hidden behind other
-    // windows.
-    controlWin.showInactive();
-    try { controlWin.moveTop(); } catch (e) { /* not supported on this platform */ }
+    controlWin.show();
+    controlWin.focus();
   });
 
   controlWin.on('closed', () => {
