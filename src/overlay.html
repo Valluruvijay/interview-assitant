@@ -509,6 +509,7 @@ function changeOverlayModel(val) {
 
 ipcRenderer.on('screenshot-saved', (_, { filename }) => {
   showOverlayToast('📸 Screenshot Saved!');
+  $('st').textContent = 'Analyzing screen with AI...';
 });
 
 ipcRenderer.on('sync-active-model', (_, data) => {

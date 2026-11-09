@@ -817,6 +817,8 @@ ipcMain.on('capture-screen', async (_, options = {}) => {
     }
   } catch (err) {
     console.error('Failed to capture screen:', err);
+    safeSend(overlayWin, 'answer-done');
+    safeSend(controlWin, 'status', '❌ Screen capture failed: ' + err.message);
   }
 });
 

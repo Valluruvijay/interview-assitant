@@ -936,6 +936,15 @@ function endInterview() {
 
 // ── LIVE OVERLAY MODEL SWITCH LISTENER ────────────────────
 ipcRenderer.on('switch-overlay-model', (_, { provider, model }) => {
+  // If an AI generation is currently pending or stuck, cancel it immediately so the new model is ready to answer!
+  if (activeAbortController) {
+    try { activeAbortController.abort(); } catch(e){}
+    activeAbortController = null;
+  }
+  isGenerating = false;
+  $('askBtn').disabled = false;
+  ipcRenderer.send('answer-done');
+
   if (PROVIDERS[provider]) {
     $('aiProviderSelect').value = provider;
     handleAiProviderChange();
@@ -3452,12 +3461,31 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
   question = question.replace(/^\[FOLLOW-UP QUESTION\]:?\s*/i, '').trim();
   if (!question && !imageBase64) return;
   if (isGenerating && !isTest) {
-    setStatus('⚡ An answer is already generating…');
-    return;
+    if (imageBase64) {
+      // User captured a new screenshot while an old request is running or stuck!
+      // Cancel the old request immediately and proceed with this new screenshot!
+      console.warn('[askQuestion] Preempting previous generation with new screenshot capture');
+      if (activeAbortController) {
+        try { activeAbortController.abort(); } catch(e){}
+        activeAbortController = null;
+      }
+      isGenerating = false;
+      $('askBtn').disabled = false;
+    } else {
+      setStatus('⚡ An answer is already generating…');
+      return;
+    }
   }
   isGenerating = true;
   $('askBtn').disabled = true;
   activeAbortController = new AbortController();
+  const currentCtrl = activeAbortController;
+  let watchdogFired = false;
+  const watchdogTimer = setTimeout(() => {
+    watchdogFired = true;
+    console.warn('[Watchdog] AI request exceeded 35s limit. Aborting...');
+    try { currentCtrl.abort(); } catch(e){}
+  }, 35000);
 
   let effectiveProvider = currentProvider;
   let cfg = PROVIDERS[effectiveProvider];
@@ -3493,21 +3521,30 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
                       rawSettings.geminiSttApiKey || '';
     const ocrPrompt = 'Extract everything visible in this screenshot exactly as written: the question, all answer options, code, tables, labels, and any diagram text. Do not answer it. Output plain text only, no commentary.';
     const tryVision = async (url, key, model, img) => {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-        body: JSON.stringify({
-          model,
-          max_tokens: 2000,
-          messages: [{ role: 'user', content: [
-            { type: 'text', text: ocrPrompt },
-            { type: 'image_url', image_url: { url: img } }
-          ] }]
-        })
-      });
-      if (!r.ok) return '';
-      const d = await r.json();
-      return d.choices?.[0]?.message?.content?.trim() || '';
+      const visionCtrl = new AbortController();
+      const visionTimeout = setTimeout(() => visionCtrl.abort(), 10000);
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+          signal: visionCtrl.signal,
+          body: JSON.stringify({
+            model,
+            max_tokens: 2000,
+            messages: [{ role: 'user', content: [
+              { type: 'text', text: ocrPrompt },
+              { type: 'image_url', image_url: { url: img } }
+            ] }]
+          })
+        });
+        clearTimeout(visionTimeout);
+        if (!r.ok) return '';
+        const d = await r.json();
+        return d.choices?.[0]?.message?.content?.trim() || '';
+      } catch (err) {
+        clearTimeout(visionTimeout);
+        return '';
+      }
     };
 
     const images = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
@@ -3966,8 +4003,16 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
     setStatus(`✓ Answer ready — ${currentSessionQA.length} Q&A this session${cacheInfo}`);
 
   } catch(err) {
+    clearTimeout(watchdogTimer);
     if (err.name === 'AbortError') {
-      setStatus('Answer generation cancelled.');
+      if (watchdogFired) {
+        const timeoutMsg = `\n\n⏱️ **Request Timeout (35s)**: The ${effectiveProvider.toUpperCase()} API took too long to respond. Automatically cancelled to prevent app freeze.\n\n👉 **Tip**: Switch to **Google Gemini** or **Groq** in the overlay model selector for ultra-fast responses.`;
+        ipcRenderer.send(isTest ? 'test-ai-error' : 'answer-chunk', timeoutMsg);
+        setStatus('⏱️ AI request timed out (35s limit). Ready for next question.');
+      } else {
+        setStatus('Answer generation cancelled.');
+      }
+      if (!isTest) ipcRenderer.send('answer-done');
     } else {
       let errText = '\n\n⚠ **API Error**: ' + err.message + '\n*(Check your API key and model selection)*';
       if (responsesModeActive && /404|400|not found|unsupported|does not support|unknown endpoint/i.test(err.message)) {
@@ -3981,11 +4026,12 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
       setStatus('❌ Error: ' + err.message);
       console.error('API error:', err);
     }
+  } finally {
+    clearTimeout(watchdogTimer);
+    isGenerating = false;
+    $('askBtn').disabled = false;
+    activeAbortController = null;
   }
-
-  isGenerating = false;
-  $('askBtn').disabled = false;
-  activeAbortController = null;
 }
 
 // ── SESSION ───────────────────────────────────────────────
