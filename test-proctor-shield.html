@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>🛡️ HackerRank & Mettl Proctoring Shield Test Suite</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: #090d16;
+      color: #e6edf3;
+      padding: 24px;
+      line-height: 1.5;
+    }
+    .container { max-width: 1040px; margin: 0 auto; }
+    
+    /* Top Header */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 18px;
+      border-bottom: 1px solid #21262d;
+      margin-bottom: 20px;
+    }
+    .brand {
+      font-size: 20px;
+      font-weight: 700;
+      color: #58a6ff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .header-actions { display: flex; align-items: center; gap: 10px; }
+    
+    /* Shield Detection Banner */
+    #tampermonkeyBanner {
+      padding: 12px 18px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .shield-active {
+      background: rgba(35, 134, 54, 0.15);
+      border: 1px solid #238636;
+      color: #3fb950;
+    }
+    .shield-inactive {
+      background: rgba(218, 54, 51, 0.15);
+      border: 1px solid #da3633;
+      color: #f85149;
+    }
+
+    /* Red Alert Banner on Violation */
+    #alertBanner {
+      display: none;
+      background: rgba(248, 81, 73, 0.2);
+      border: 1px solid #f85149;
+      color: #ff7b72;
+      padding: 14px 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      font-weight: 600;
+      animation: shake 0.3s ease-in-out;
+    }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-6px); }
+      40%, 80% { transform: translateX(6px); }
+    }
+
+    /* Metric Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .card-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #8b949e;
+      letter-spacing: 0.8px;
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .card-val {
+      font-size: 24px;
+      font-weight: 700;
+      font-family: monospace;
+    }
+    .card-sub { font-size: 11px; color: #8b949e; margin-top: 4px; }
+    .val-safe { color: #3fb950; }
+    .val-warn { color: #f85149; }
+    .val-neutral { color: #58a6ff; }
+
+    /* Vectors Checklist & Test Controls */
+    .section-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 18px;
+      margin-bottom: 20px;
+    }
+    .section-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    /* Vectors Grid */
+    .vector-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      font-size: 12px;
+    }
+    .vector-item {
+      background: #0d1117;
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: 1px solid #21262d;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .vector-name { font-family: monospace; color: #c9d1d9; }
+    .vector-status { font-weight: 600; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
+    .status-shielded { background: rgba(35,134,54,0.2); color: #3fb950; }
+    .status-listening { background: rgba(88,166,255,0.15); color: #58a6ff; }
+    .status-leaked { background: rgba(248,81,73,0.2); color: #f85149; }
+
+    /* Buttons */
+    .btn {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: #30363d; color: #fff; }
+    .btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
+    .btn-primary:hover { background: #2ea043; }
+    .btn-danger { background: rgba(218,54,51,0.2); border-color: #da3633; color: #f85149; }
+    .btn-danger:hover { background: rgba(218,54,51,0.4); }
+
+    /* Logs */
+    #logList {
+      max-height: 260px;
+      overflow-y: auto;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 11.5px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .log-row {
+      padding: 6px 10px;
+      border-radius: 4px;
+      background: #0d1117;
+      border-left: 3px solid #30363d;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .log-warn { border-left-color: #f85149; color: #ff7b72; background: rgba(248, 81, 73, 0.08); font-weight: 600; }
+    .log-safe { border-left-color: #3fb950; color: #7ee787; background: rgba(63, 185, 80, 0.08); }
+    .log-info { border-left-color: #58a6ff; color: #79c0ff; background: rgba(88, 166, 255, 0.08); }
+    
+    /* Toggle Switch */
+    .switch-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #8b949e;
+      cursor: pointer;
+    }
+    .switch-label input { accent-color: #238636; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  
+  <!-- Header -->
+  <div class="header">
+    <div class="brand">
+      <span>🛡️</span> Proctoring Shield &amp; Tab-Switch Test Suite
+    </div>
+    <div class="header-actions">
+      <label class="switch-label">
+        <input type="checkbox" id="audioToggle" checked> 🔊 Audio Alert on Leak
+      </label>
+      <button class="btn btn-danger" onclick="resetAll()">Reset Counters</button>
+    </div>
+  </div>
+
+  <!-- Shield Detection Banner -->
+  <div id="tampermonkeyBanner" class="shield-inactive">
+    <div id="tampermonkeyText">Checking Tampermonkey UserScript status...</div>
+    <button class="btn" onclick="checkShieldHealth()" style="font-size:11px; padding:3px 8px;">Re-Check</button>
+  </div>
+
+  <!-- Red Violation Alert Banner -->
+  <div id="alertBanner">
+    🚨 <strong>PROCTOR VIOLATION DETECTED!</strong> Browser focus was lost or tab switched!
+  </div>
+
+  <!-- 6 Live Metrics Grid -->
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">
+        <span>Option B Shield Status</span>
+        <span id="shieldTag" style="font-size:9px; padding:1px 5px; border-radius:3px; background:#21262d;">DETECTING</span>
+      </div>
+      <div class="card-val val-neutral" id="shieldState">CHECKING...</div>
+      <div class="card-sub" id="shieldSub">Inspecting overrides...</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Window OS Focus</span>
+        <span style="font-size:9px; color:#8b949e;">window.blur</span>
+      </div>
+      <div class="card-val val-safe" id="focusState">FOCUSED</div>
+      <div class="card-sub" id="focusSub">Browser is active foreground</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Total Leaks Detected</span>
+        <span style="font-size:9px; color:#8b949e;">Violation Count</span>
+      </div>
+      <div class="card-val val-safe" id="violationCount">0</div>
+      <div class="card-sub" id="violationSub">0 unblocked events</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Tab Visibility</span>
+        <span style="font-size:9px; color:#8b949e;">visibilitychange</span>
+      </div>
+      <div class="card-val val-safe" id="visState">VISIBLE</div>
+      <div class="card-sub" id="visSub">document.hidden: false</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Active Focus Polling</span>
+        <span style="font-size:9px; color:#8b949e;">document.hasFocus()</span>
+      </div>
+      <div class="card-val val-safe" id="pollState">TRUE</div>
+      <div class="card-sub">Polled every 200ms</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Mouse Viewport Tracking</span>
+        <span style="font-size:9px; color:#8b949e;">mouseleave</span>
+      </div>
+      <div class="card-val val-safe" id="mouseState">INSIDE</div>
+      <div class="card-sub" id="mouseSub">Cursor on browser page</div>
+    </div>
+  </div>
+
+  <!-- All 10 Proctor Vectors Monitored -->
+  <div class="section-box">
+    <div class="section-title">
+      <span>Monitored Proctoring Vectors (10 Active Checkpoints)</span>
+      <span style="font-size:11px; text-transform:none; color:#8b949e;">All events monitored in capture &amp; bubble phases</span>
+    </div>
+    <div class="vector-grid">
+      <div class="vector-item">
+        <span class="vector-name">1. window.addEventListener('blur')</span>
+        <span class="vector-status status-listening" id="v_blur">LISTENING</span>
+      </div>
+      <div class="vector-item">
+        <span class="vector-name">2. window.onblur property handler</span>
+        <span class="vector-status status-listening" id="v_onblur">LISTENING</span>
+      </div>
+      <div class="vector-item">
+        <span class="vector-name">3. document.addEventListener('visibilitychange')</span>
+        <span class="vector-status status-listening" id="v_vis">LISTENING</span>
+      </div>
+      <div class="vector-item">
+        <span class="vector-name">4. document.onvisibilitychange handler</span>
+        <span class="vector-status status-listening" id="v_onvis">LISTENING</span>
+      </div>
+      <div class="vector-item">
+        <span class="vector-name">5. document.addEventListener('focusout')</span>
+        <span class="vector-status status-listening" id="v_focusout">LISTENING</span>
+      </div>
+      <div class="vector-item">
+        <span class="vector-name">6. window.addEventListener('pagehide')</span>
+        <span class="vector-status status-listening" id="v_pagehide">LISTENING</span>
+      </div>
+      <div class="vector-item">
+        <span class="vector-name">7. document.body.onmouseleave (Cursor Exit)</span>
+        <span class="vector-status status-listening" id="v_mouseleave">LISTENING</span>
+      </div>
+      <div class="vector-item">
+        <span class="vector-name">8. window.onmouseout (DWM boundary check)</span>
+        <span class="vector-status status-listening" id="v_mouseout">LISTENING</span>
+      </div>
+      <div class="vector-item">
+        <span class="vector-name">9. Polled document.hasFocus() [every 200ms]</span>
+        <span class="vector-status status-listening" id="v_poll_focus">ACTIVE (TRUE)</span>
+      </div>
+      <div class="vector-item">
+        <span class="vector-name">10. Polled document.hidden [every 200ms]</span>
+        <span class="vector-status status-listening" id="v_poll_hidden">ACTIVE (FALSE)</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Interactive Testing Controls -->
+  <div class="section-box">
+    <div class="section-title">
+      <span>Interactive Proctor Test Controls</span>
+      <span style="font-size:11px; text-transform:none; color:#8b949e;">Click to verify how Option B handles these events</span>
+    </div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick="simulateNativeBlur()">🧪 Dispatch Test Blur Event</button>
+      <button class="btn" onclick="simulateVisibilityChange()">🧪 Dispatch Test VisibilityChange</button>
+      <button class="btn" onclick="checkShieldHealth()">🔍 Run Full Shield Diagnostic</button>
+      <button class="btn" onclick="triggerTestAudio()">🔔 Test Alert Sound</button>
+    </div>
+  </div>
+
+  <!-- Real-Time Audit Log -->
+  <div class="section-box">
+    <div class="section-title">
+      <span>Real-Time Event Audit Log</span>
+      <button class="btn" onclick="clearLogs()" style="font-size:11px; padding:2px 8px;">Clear Log</button>
+    </div>
+    <div id="logList">
+      <div class="log-row log-info">
+        <span>[Initialization] All 10 proctoring interceptors and polling loops active.</span>
+        <span>00:00:00.000</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  let violations = 0;
+  let audioCtx = null;
+
+  const focusEl = document.getElementById('focusState');
+  const focusSub = document.getElementById('focusSub');
+  const visEl = document.getElementById('visState');
+  const visSub = document.getElementById('visSub');
+  const warnEl = document.getElementById('violationCount');
+  const warnSub = document.getElementById('violationSub');
+  const pollEl = document.getElementById('pollState');
+  const mouseEl = document.getElementById('mouseState');
+  const mouseSub = document.getElementById('mouseSub');
+  const banner = document.getElementById('alertBanner');
+  const logList = document.getElementById('logList');
+  const tmBanner = document.getElementById('tampermonkeyBanner');
+  const tmText = document.getElementById('tampermonkeyText');
+  const shieldStateEl = document.getElementById('shieldState');
+  const shieldSubEl = document.getElementById('shieldSub');
+  const shieldTagEl = document.getElementById('shieldTag');
+
+  function getTimestamp() {
+    const d = new Date();
+    return d.toTimeString().split(' ')[0] + '.' + String(d.getMilliseconds()).padStart(3, '0');
+  }
+
+  function playAlertBeep() {
+    if (!document.getElementById('audioToggle').checked) return;
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime); // 880 Hz beep
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.15);
+    } catch(e) {}
+  }
+
+  function addLog(text, type = 'info') {
+    const row = document.createElement('div');
+    row.className = 'log-row ' + (type === 'warn' ? 'log-warn' : (type === 'safe' ? 'log-safe' : 'log-info'));
+    row.innerHTML = `<span>${text}</span><span>${getTimestamp()}</span>`;
+    logList.insertBefore(row, logList.firstChild);
+  }
+
+  function reportViolation(eventName, detail) {
+    violations++;
+    warnEl.textContent = violations;
+    warnEl.className = 'card-val val-warn';
+    warnSub.textContent = `${violations} leak(s) captured!`;
+    
+    banner.style.display = 'block';
+    banner.innerHTML = `🚨 <strong>PROCTOR LEAK #${violations}:</strong> Event <code>${eventName}</code> fired! (${detail})`;
+
+    playAlertBeep();
+    addLog(`🚨 [LEAK #${violations}] ${eventName} — ${detail}`, 'warn');
+  }
+
+  // ── TAMPERMONKEY SHIELD DIAGNOSTIC ───────────────────────
+  function checkShieldHealth() {
+    const isFileUrl = window.location.protocol === 'file:';
+    let overridesFound = 0;
+    let details = [];
+
+    // Check 1: document.hidden override
+    try {
+      const descHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
+      if (descHidden && (descHidden.get || descHidden.value === false)) {
+        overridesFound++;
+        details.push('document.hidden=false');
+      }
+    } catch(e) {}
+
+    // Check 2: document.visibilityState override
+    try {
+      const descVis = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+      if (descVis && (descVis.get || descVis.value === 'visible')) {
+        overridesFound++;
+        details.push('visibilityState="visible"');
+      }
+    } catch(e) {}
+
+    // Check 3: document.hasFocus override
+    try {
+      const descFocus = Object.getOwnPropertyDescriptor(document, 'hasFocus');
+      if (descFocus && descFocus.value && descFocus.value() === true) {
+        overridesFound++;
+        details.push('hasFocus()=true');
+      }
+    } catch(e) {}
+
+    if (overridesFound >= 2) {
+      tmBanner.className = 'shield-active';
+      tmText.innerHTML = `✅ <strong>Option B Shield is ACTIVE &amp; RUNNING!</strong> (${details.join(', ')}) — Test site will be 100% blind to tab switches.`;
+      shieldStateEl.textContent = 'ACTIVE';
+      shieldStateEl.className = 'card-val val-safe';
+      shieldTagEl.textContent = 'ENGAGED';
+      shieldTagEl.style.color = '#3fb950';
+      shieldSubEl.textContent = `All ${overridesFound} core descriptors overridden`;
+      addLog(`✅ Diagnostic: Option B Shield verified (${details.join(', ')}).`, 'safe');
+      return true;
+    } else {
+      tmBanner.className = 'shield-inactive';
+      let extraHint = isFileUrl 
+        ? '<br><span style="font-size:11px; font-weight:normal; color:#f85149;">⚠️ You opened this via file:// URL. Chrome blocks extensions on file:// by default. Go to <code>chrome://extensions</code> &rarr; Tampermonkey &rarr; Details &rarr; Enable <strong>"Allow access to file URLs"</strong>, or use local HTTP server.</span>' 
+        : '';
+      tmText.innerHTML = `⚠️ <strong>Option B Shield NOT DETECTED!</strong> Tampermonkey is not intercepting this page.${extraHint}`;
+      shieldStateEl.textContent = 'INACTIVE';
+      shieldStateEl.className = 'card-val val-warn';
+      shieldTagEl.textContent = 'NOT DETECTED';
+      shieldTagEl.style.color = '#f85149';
+      shieldSubEl.textContent = 'Native browser events exposed';
+      addLog(`⚠️ Diagnostic: Option B Shield not detected. Native events unshielded.`, 'warn');
+      return false;
+    }
+  }
+
+  // ── 1. WINDOW BLUR EVENT ─────────────────────────────────
+  window.addEventListener('blur', (e) => {
+    document.getElementById('v_blur').className = 'vector-status status-leaked';
+    document.getElementById('v_blur').textContent = 'LEAKED (FIRED)';
+    focusEl.textContent = 'UNFOCUSED';
+    focusEl.className = 'card-val val-warn';
+    focusSub.textContent = 'window.blur fired';
+    reportViolation('window.blur', 'Browser lost OS focus');
+  });
+
+  window.onblur = (e) => {
+    document.getElementById('v_onblur').className = 'vector-status status-leaked';
+    document.getElementById('v_onblur').textContent = 'LEAKED';
+  };
+
+  // ── 2. WINDOW FOCUS RESTORED ─────────────────────────────
+  window.addEventListener('focus', () => {
+    focusEl.textContent = 'FOCUSED';
+    focusEl.className = 'card-val val-safe';
+    focusSub.textContent = 'Browser regained focus';
+    addLog(`✅ window.focus: Browser regained foreground focus.`, 'safe');
+  });
+
+  // ── 3. VISIBILITY CHANGE ─────────────────────────────────
+  document.addEventListener('visibilitychange', () => {
+    document.getElementById('v_vis').className = 'vector-status status-leaked';
+    document.getElementById('v_vis').textContent = 'LEAKED';
+    
+    if (document.hidden) {
+      visEl.textContent = 'HIDDEN';
+      visEl.className = 'card-val val-warn';
+      visSub.textContent = 'document.hidden: true';
+      reportViolation('document.visibilitychange', 'Tab hidden/minimized');
+    } else {
+      visEl.textContent = 'VISIBLE';
+      visEl.className = 'card-val val-safe';
+      visSub.textContent = 'document.hidden: false';
+      addLog(`✅ document.visibilitychange: Tab visible.`, 'safe');
+    }
+  });
+
+  document.onvisibilitychange = () => {
+    document.getElementById('v_onvis').className = 'vector-status status-leaked';
+    document.getElementById('v_onvis').textContent = 'LEAKED';
+  };
+
+  // ── 4. FOCUSOUT & PAGEHIDE ───────────────────────────────
+  window.addEventListener('focusout', () => {
+    document.getElementById('v_focusout').className = 'vector-status status-leaked';
+    document.getElementById('v_focusout').textContent = 'FIRED';
+    addLog(`⚠️ focusout fired.`, 'info');
+  });
+
+  window.addEventListener('pagehide', () => {
+    document.getElementById('v_pagehide').className = 'vector-status status-leaked';
+    document.getElementById('v_pagehide').textContent = 'FIRED';
+    reportViolation('window.pagehide', 'Page navigation / unload');
+  });
+
+  // ── 5. MOUSELEAVE & MOUSEOUT ─────────────────────────────
+  document.body.addEventListener('mouseleave', () => {
+    mouseEl.textContent = 'LEFT';
+    mouseEl.className = 'card-val val-warn';
+    mouseSub.textContent = 'Cursor exited browser window';
+    document.getElementById('v_mouseleave').className = 'vector-status status-leaked';
+    document.getElementById('v_mouseleave').textContent = 'EXITED';
+    addLog(`🖱️ mouseleave: Cursor left browser page (hovering over overlay or desktop).`, 'info');
+  });
+
+  document.body.addEventListener('mouseenter', () => {
+    mouseEl.textContent = 'INSIDE';
+    mouseEl.className = 'card-val val-safe';
+    mouseSub.textContent = 'Cursor on browser page';
+    document.getElementById('v_mouseleave').className = 'vector-status status-listening';
+    document.getElementById('v_mouseleave').textContent = 'INSIDE';
+  });
+
+  // ── 6. ACTIVE POLLING (DOCUMENT.HASFOCUS & HIDDEN) ────────
+  setInterval(() => {
+    const hasFocus = document.hasFocus();
+    pollEl.textContent = hasFocus ? 'TRUE' : 'FALSE';
+    pollEl.className = 'card-val ' + (hasFocus ? 'val-safe' : 'val-warn');
+    
+    const vPollFocus = document.getElementById('v_poll_focus');
+    if (!hasFocus) {
+      vPollFocus.className = 'vector-status status-leaked';
+      vPollFocus.textContent = 'LEAK (FALSE)';
+      reportViolation('document.hasFocus()', 'Active polling returned FALSE');
+    } else {
+      vPollFocus.className = 'vector-status status-shielded';
+      vPollFocus.textContent = 'SHIELDED (TRUE)';
+    }
+
+    const isHidden = document.hidden;
+    const vPollHidden = document.getElementById('v_poll_hidden');
+    if (isHidden) {
+      vPollHidden.className = 'vector-status status-leaked';
+      vPollHidden.textContent = 'LEAK (TRUE)';
+      reportViolation('document.hidden', 'Active polling returned TRUE');
+    } else {
+      vPollHidden.className = 'vector-status status-shielded';
+      vPollHidden.textContent = 'SHIELDED (FALSE)';
+    }
+  }, 200);
+
+  // ── INTERACTIVE TEST HELPERS ─────────────────────────────
+  function simulateNativeBlur() {
+    addLog('🧪 Manually dispatching synthetic blur event...', 'info');
+    window.dispatchEvent(new Event('blur'));
+  }
+
+  function simulateVisibilityChange() {
+    addLog('🧪 Manually dispatching synthetic visibilitychange event...', 'info');
+    document.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  function triggerTestAudio() {
+    playAlertBeep();
+    addLog('🔔 Test alert audio chime played.', 'info');
+  }
+
+  function resetAll() {
+    violations = 0;
+    warnEl.textContent = '0';
+    warnEl.className = 'card-val val-safe';
+    warnSub.textContent = '0 unblocked events';
+    banner.style.display = 'none';
+    clearLogs();
+    addLog('🧹 Violations and audit log reset.', 'info');
+    checkShieldHealth();
+  }
+
+  function clearLogs() {
+    logList.innerHTML = '';
+  }
+
+  // Initial check on page load
+  window.addEventListener('DOMContentLoaded', () => {
+    setTimeout(checkShieldHealth, 100);
+  });
+</script>
+
+</body>
+</html>

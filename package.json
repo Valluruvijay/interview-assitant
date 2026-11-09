@@ -5,6 +5,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
+    "test:shield": "node serve-test.js",
     "start:debug": "electron . --enable-logging",
     "install-electron": "npm install electron --save-dev",
     "pack": "electron-builder --dir",
