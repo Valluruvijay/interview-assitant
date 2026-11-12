@@ -4241,7 +4241,13 @@ async function wsPayload(msg) {
 
 ipcRenderer.on('ask-followup', (_, text) => {
   if (text && text.trim()) {
-    console.log('[Follow-up Bar] Received user typed question:', text);
+    console.log('[Follow-up Bar] Received follow-up question:', text);
+    if (activeAbortController) {
+      try { activeAbortController.abort(); } catch(e){}
+      activeAbortController = null;
+    }
+    isGenerating = false;
+    $('askBtn').disabled = false;
     setStatus('⚡ Generating answer for: ' + (text.length > 35 ? text.substring(0, 35) + '…' : text));
     askQuestion(text.trim());
   }

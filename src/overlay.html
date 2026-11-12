@@ -323,49 +323,6 @@ strong { font-weight:600; color:var(--accent); }
   color: #fff;
 }
 
-/* ── LIVE INTERVIEWER SUBTITLE STRIP ─────────────────── */
-.live-subtitles-bar {
-  background: rgba(15, 23, 42, 0.95);
-  border-top: 1px solid rgba(245, 158, 11, 0.4);
-  padding: 5px 10px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  -webkit-app-region: no-drag;
-}
-.sub-pulse-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #f59e0b;
-  box-shadow: 0 0 6px #f59e0b;
-  animation: pulseDot 1.2s infinite;
-  flex-shrink: 0;
-}
-@keyframes pulseDot {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.35; transform: scale(0.85); }
-}
-.sub-title-tag {
-  font-size: 9.5px;
-  font-weight: 700;
-  color: #f59e0b;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.sub-live-text {
-  font-size: 11px;
-  color: #fef3c7;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  font-weight: 500;
-}
-
-
 .bottom-bar {
   display:flex;
   justify-content:space-between;
@@ -526,12 +483,6 @@ strong { font-weight:600; color:var(--accent); }
         ↩ Reject <kbd>Alt+X</kbd>
       </button>
     </div>
-  </div>
-
-  <div id="liveSubtitleStrip" class="live-subtitles-bar" style="display:none;">
-    <div class="sub-pulse-dot"></div>
-    <span class="sub-title-tag">🎙️ Listening:</span>
-    <span id="liveSubtitleText" class="sub-live-text">Waiting for interviewer to speak...</span>
   </div>
 
   <div class="followup-bar" style="display:flex; padding: 6px 10px; background: rgba(0,0,0,0.4); border-top: 1px solid var(--border); gap: 6px; -webkit-app-region:no-drag;">
@@ -1021,16 +972,23 @@ function renderMarkdown(md) {
       }
     }
     else if (/^[-*•]\s/.test(trimmed)) {
-      if (!inList) { html += '<ul style="margin:3px 0;padding-left:16px;">'; inList = true; }
-      html += '<li style="margin:2px 0;">' + trimmed.replace(/^[-*•]\s+/, '') + '</li>';
+      if (inCard === 'followup') {
+        const rawQ = trimmed.replace(/^[-*•]\s*/, '').replace(/<[^>]+>/g, '').trim();
+        const cleanQ = rawQ.replace(/→.*$/, '').trim();
+        const encodedQ = encodeURIComponent(cleanQ);
+        html += '<div class="followup-item"><span>' + trimmed + '</span> <button class="ask-pill" data-q="' + encodedQ + '" onclick="sendFollowUpFromPill(this)">⚡ Ask</button></div>';
+      } else {
+        if (!inList) { html += '<ul style="margin:3px 0;padding-left:16px;">'; inList = true; }
+        html += '<li style="margin:2px 0;">' + trimmed.replace(/^[-*•]\s+/, '') + '</li>';
+      }
     }
     else if (/^\d+[\.\)]\s/.test(trimmed)) {
       if (inList) { html += '</ul>'; inList = false; }
       if (inCard === 'followup') {
         const rawQ = trimmed.replace(/^\d+[\.\)]\s*/, '').replace(/<[^>]+>/g, '').trim();
         const cleanQ = rawQ.replace(/→.*$/, '').trim();
-        const safeQAttr = cleanQ.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-        html += '<div class="followup-item"><span>' + trimmed + '</span> <button class="ask-pill" onclick="sendFollowUpFromPill(\'' + safeQAttr + '\')">⚡ Ask</button></div>';
+        const encodedQ = encodeURIComponent(cleanQ);
+        html += '<div class="followup-item"><span>' + trimmed + '</span> <button class="ask-pill" data-q="' + encodedQ + '" onclick="sendFollowUpFromPill(this)">⚡ Ask</button></div>';
       } else {
         html += '<div style="margin:2px 0;padding-left:4px;">' + trimmed + '</div>';
       }
@@ -1100,21 +1058,8 @@ let currentInterviewerPair = null;
 //   scrollToBottom();
 // });
 // 
-let subtitleTimer = null;
-
 // 🎙️ Interviewer Speech (Meeting / Zoom / Teams)
 ipcRenderer.on('interviewer-interim', (_, text) => {
-  const strip = $('liveSubtitleStrip');
-  const stripText = $('liveSubtitleText');
-  if (strip && stripText && text && text.trim()) {
-    strip.style.display = 'flex';
-    stripText.textContent = text.trim();
-    clearTimeout(subtitleTimer);
-    subtitleTimer = setTimeout(() => {
-      strip.style.display = 'none';
-    }, 6000);
-  }
-
   if (autoSendOff && text && text.trim().length > 2) {
     const live = text.trim();
     if (!(pendingCommitted && pendingCommitted.includes(live))) {
@@ -1148,8 +1093,6 @@ ipcRenderer.on('interviewer-interim', (_, text) => {
   scrollToBottom();
 });
 ipcRenderer.on('show-question', (_, q) => {
-  const strip = $('liveSubtitleStrip');
-  if (strip) strip.style.display = 'none';
   if (currentCandidatePair) { currentCandidatePair = null; }
   if (currentInterviewerPair) { currentInterviewerPair.remove(); currentInterviewerPair = null; }
   currentQ = q; currentA = '';
@@ -1211,16 +1154,17 @@ ipcRenderer.on('answer-chunk', (_, chunk) => {
   }
 });
 
-function sendFollowUpFromPill(q) {
-  if (!q) return;
-  const decoded = q.replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
-  ipcRenderer.send('ask-followup', decoded);
-  showOverlayToast('⚡ Asking follow-up…');
+function sendFollowUpFromPill(btn) {
+  if (!btn) return;
+  const raw = btn.getAttribute('data-q') || '';
+  const cleanQ = decodeURIComponent(raw).trim();
+  if (!cleanQ) return;
+  console.log('[Anticipated Follow-up] User clicked Ask for:', cleanQ);
+  ipcRenderer.send('ask-followup', cleanQ);
+  showOverlayToast('⚡ Asking: ' + (cleanQ.length > 25 ? cleanQ.slice(0, 25) + '...' : cleanQ));
 }
 
 ipcRenderer.on('answer-done', () => {
-  const strip = $('liveSubtitleStrip');
-  if (strip) strip.style.display = 'none';
   if (currentAnswerContent) {
     currentAnswerContent.innerHTML = renderMarkdown(currentA);
   }
@@ -1250,8 +1194,6 @@ ipcRenderer.on('answer-done', () => {
 });
 
 ipcRenderer.on('answer-clear', () => {
-  const strip = $('liveSubtitleStrip');
-  if (strip) strip.style.display = 'none';
   $('chatContainer').innerHTML = '';
   const idle = document.createElement('div');
   idle.className = 'idle';
