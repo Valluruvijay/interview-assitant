@@ -177,7 +177,7 @@ kbd { font-size:10px; background:rgba(255,255,255,0.07); border:1px solid rgba(2
   align-items: center;
   gap: 7px;
 }
-.q-timer-badge {
+.q-timer-badge, .a-timer-badge {
   font-size: 8.5px;
   font-family: Consolas, monospace;
   font-weight: 700;
@@ -195,14 +195,14 @@ kbd { font-size:10px; background:rgba(255,255,255,0.07); border:1px solid rgba(2
   user-select: none;
   transition: all 0.2s ease;
 }
-.q-timer-badge.ready {
+.q-timer-badge.ready, .a-timer-badge.ready {
   background: rgba(34, 197, 94, 0.18);
   border-color: rgba(34, 197, 94, 0.5);
   color: #4ade80;
   box-shadow: 0 0 8px rgba(34, 197, 94, 0.35);
   animation: timerPulse 1s infinite alternate;
 }
-.q-timer-badge.done {
+.q-timer-badge.done, .a-timer-badge.done {
   background: rgba(56, 189, 248, 0.12);
   border-color: rgba(56, 189, 248, 0.35);
   color: #38bdf8;
@@ -758,7 +758,8 @@ let userRequestedAnswerScroll = false;
 let currentTimerInterval = null;
 let currentQuestionStartTime = null;
 let currentTTFT = null;
-let activeTimerBadge = null;
+let activeQTimerBadge = null;
+let activeATimerBadge = null;
 
 function changeOverlayOpacity(val) {
   const op = Math.max(0.2, Math.min(1.0, parseFloat(val) / 100));
@@ -1057,6 +1058,7 @@ function scrollToCurrentQuestion() {
 }
 
 function escapeHtml(str) {
+  if (typeof str !== 'string') return String(str || '');
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
@@ -1259,13 +1261,13 @@ ipcRenderer.on('show-question', (_, qData) => {
   const qTitle = document.createElement('span');
   qTitle.textContent = '\uD83C\uDF99 Interviewer';
 
-  const timerBadge = document.createElement('span');
-  timerBadge.className = 'q-timer-badge';
-  timerBadge.innerHTML = '⏱️ 0.0s';
-  timerBadge.title = 'Measuring AI response time…';
+  const qTimerBadge = document.createElement('span');
+  qTimerBadge.className = 'q-timer-badge';
+  qTimerBadge.innerHTML = '⏱️ 0.0s';
+  qTimerBadge.title = 'Measuring AI response time…';
 
   qLabel.appendChild(qTitle);
-  qLabel.appendChild(timerBadge);
+  qLabel.appendChild(qTimerBadge);
 
   const qContent = document.createElement('div');
   qContent.className = 'bubble-content';
@@ -1274,25 +1276,68 @@ ipcRenderer.on('show-question', (_, qData) => {
   qBubble.appendChild(qLabel);
   qBubble.appendChild(qContent);
 
-  activeTimerBadge = timerBadge;
-
-  // Live timer tick every 100ms
-  currentTimerInterval = setInterval(() => {
-    if (!activeTimerBadge || !currentQuestionStartTime) return;
-    const elapsed = (Date.now() - currentQuestionStartTime) / 1000;
-    if (!currentTTFT) {
-      activeTimerBadge.innerHTML = `⏱️ ${elapsed.toFixed(1)}s`;
-    } else {
-      activeTimerBadge.innerHTML = `⚡ ${currentTTFT}s <span style="opacity:0.65;font-size:8px;font-weight:normal;">(${elapsed.toFixed(1)}s)</span>`;
-    }
-  }, 100);
+  activeQTimerBadge = qTimerBadge;
 
   // Answer bubble
   const aBubble = document.createElement('div');
   aBubble.className = 'bubble bubble-a';
   const aLabel = document.createElement('div');
   aLabel.className = 'bubble-label';
-  aLabel.innerHTML = '<span>⚡ AI Answer</span><span class="jump-pill" title="Jump to question top">⬆ Question</span>';
+
+  const aTitleWrap = document.createElement('span');
+  aTitleWrap.style.display = 'inline-flex';
+  aTitleWrap.style.alignItems = 'center';
+  aTitleWrap.style.gap = '6px';
+
+  const aTitle = document.createElement('span');
+  aTitle.textContent = '⚡ AI Answer';
+
+  const aTimerBadge = document.createElement('span');
+  aTimerBadge.className = 'a-timer-badge';
+  aTimerBadge.innerHTML = '⏱️ 0.0s';
+  aTimerBadge.title = 'Measuring AI response time…';
+
+  aTitleWrap.appendChild(aTitle);
+  aTitleWrap.appendChild(aTimerBadge);
+
+  const jumpPill = document.createElement('span');
+  jumpPill.className = 'jump-pill';
+  jumpPill.title = 'Jump to question top';
+  jumpPill.textContent = '⬆ Question';
+
+  aLabel.appendChild(aTitleWrap);
+  aLabel.appendChild(jumpPill);
+
+  activeATimerBadge = aTimerBadge;
+
+  // Live timer tick every 100ms - actively prints while downloading / streaming!
+  currentTimerInterval = setInterval(() => {
+    if (!currentQuestionStartTime) return;
+    const elapsed = ((Date.now() - currentQuestionStartTime) / 1000).toFixed(1);
+    
+    const stEl = $('st');
+    if (stEl) {
+      if (!currentTTFT) {
+        stEl.textContent = `Downloading… ${elapsed}s`;
+      } else {
+        stEl.textContent = `Streaming… ${elapsed}s (⚡ ${currentTTFT}s)`;
+      }
+    }
+
+    const badgeHtml = currentTTFT 
+      ? `⚡ ${currentTTFT}s · ⏱️ ${elapsed}s`
+      : `⏱️ ${elapsed}s`;
+
+    if (activeQTimerBadge) {
+      activeQTimerBadge.innerHTML = badgeHtml;
+      if (currentTTFT) activeQTimerBadge.classList.add('ready');
+    }
+    if (activeATimerBadge) {
+      activeATimerBadge.innerHTML = badgeHtml;
+      if (currentTTFT) activeATimerBadge.classList.add('ready');
+    }
+  }, 100);
+
   aLabel.title = 'Click to jump to this question & talking points';
   aLabel.onclick = (e) => {
     e.stopPropagation();
@@ -1333,7 +1378,7 @@ ipcRenderer.on('show-question', (_, qData) => {
   currentPair.appendChild(aBubble);
   $('chatContainer').appendChild(currentPair);
 
-  $('st').textContent = 'Generating…';
+  $('st').textContent = 'Downloading… 0.0s';
   $('orb').style.background = '#FAC775';
 
   if (userRequestedAnswerScroll) {
@@ -1355,12 +1400,20 @@ ipcRenderer.on('answer-chunk', (_, chunk) => {
   currentA += chunk;
   
   // Capture TTFT (Time To First Token) at the exact moment first text arrives
-  if (!currentTTFT && currentQuestionStartTime && activeTimerBadge) {
+  if (!currentTTFT && currentQuestionStartTime) {
     const elapsed = ((Date.now() - currentQuestionStartTime) / 1000).toFixed(1);
     currentTTFT = elapsed;
-    activeTimerBadge.classList.add('ready');
-    activeTimerBadge.innerHTML = `⚡ ${currentTTFT}s`;
-    activeTimerBadge.title = `Answer started arriving in ${currentTTFT}s`;
+    const badgeHtml = `⚡ ${currentTTFT}s · ⏱️ ${elapsed}s`;
+    if (activeQTimerBadge) {
+      activeQTimerBadge.classList.add('ready');
+      activeQTimerBadge.innerHTML = badgeHtml;
+      activeQTimerBadge.title = `Answer started arriving in ${currentTTFT}s`;
+    }
+    if (activeATimerBadge) {
+      activeATimerBadge.classList.add('ready');
+      activeATimerBadge.innerHTML = badgeHtml;
+      activeATimerBadge.title = `Answer started arriving in ${currentTTFT}s`;
+    }
   }
 
   if (!pendingChunkUpdate) {
@@ -1393,14 +1446,27 @@ ipcRenderer.on('answer-done', () => {
     clearInterval(currentTimerInterval);
     currentTimerInterval = null;
   }
-  if (activeTimerBadge && currentQuestionStartTime) {
+  if (currentQuestionStartTime) {
     const totalSec = ((Date.now() - currentQuestionStartTime) / 1000).toFixed(1);
     const ttftDisplay = currentTTFT ? `${currentTTFT}s` : `${totalSec}s`;
-    activeTimerBadge.classList.remove('ready');
-    activeTimerBadge.classList.add('done');
-    activeTimerBadge.innerHTML = `⏱️ ${ttftDisplay} <span style="opacity:0.65;font-size:8px;font-weight:normal;">(${totalSec}s)</span>`;
-    activeTimerBadge.title = `Answer started in ${ttftDisplay} · Full answer completed in ${totalSec}s`;
-    activeTimerBadge = null;
+    const finalBadgeHtml = `⏱️ ${ttftDisplay} <span style="opacity:0.65;font-size:8px;font-weight:normal;">(${totalSec}s)</span>`;
+    const finalTooltip = `First word: ${ttftDisplay} · Full answer completed in ${totalSec}s`;
+
+    if (activeQTimerBadge) {
+      activeQTimerBadge.classList.remove('ready');
+      activeQTimerBadge.classList.add('done');
+      activeQTimerBadge.innerHTML = finalBadgeHtml;
+      activeQTimerBadge.title = finalTooltip;
+      activeQTimerBadge = null;
+    }
+    if (activeATimerBadge) {
+      activeATimerBadge.classList.remove('ready');
+      activeATimerBadge.classList.add('done');
+      activeATimerBadge.innerHTML = finalBadgeHtml;
+      activeATimerBadge.title = finalTooltip;
+      activeATimerBadge = null;
+    }
+    $('st').textContent = `Ready (⏱️ ${totalSec}s)`;
   }
 
   if (currentAnswerContent) {
@@ -1435,7 +1501,8 @@ ipcRenderer.on('answer-clear', () => {
     clearInterval(currentTimerInterval);
     currentTimerInterval = null;
   }
-  activeTimerBadge = null;
+  activeQTimerBadge = null;
+  activeATimerBadge = null;
   currentQuestionStartTime = null;
   currentTTFT = null;
 

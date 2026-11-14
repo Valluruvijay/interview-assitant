@@ -3631,6 +3631,14 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
 
   let fullAnswer = '';
   setStatus('Generating answer…');
+  const controlTimerInterval = setInterval(() => {
+    if (!isGenerating) {
+      clearInterval(controlTimerInterval);
+      return;
+    }
+    const sec = ((Date.now() - qStartTime) / 1000).toFixed(1);
+    setStatus(`Generating answer… (${sec}s)`);
+  }, 250);
   try {
     const headers = { 'Content-Type': 'application/json' };
     let body;
@@ -4021,6 +4029,7 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
 
     fullAnswer = fullAnswer.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
+    clearInterval(controlTimerInterval);
     ipcRenderer.send(isTest ? 'test-ai-done' : 'answer-done');
     const totalSec = ((Date.now() - qStartTime) / 1000).toFixed(1);
     const qaEntry = { question, answer: fullAnswer, time: new Date().toISOString(), durationSec: parseFloat(totalSec), screenshot: currentScreenshotPath || null };
@@ -4033,6 +4042,7 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
     setStatus(`✓ Answer ready in ${totalSec}s — ${currentSessionQA.length} Q&A this session${cacheInfo}`);
 
   } catch(err) {
+    clearInterval(controlTimerInterval);
     clearTimeout(watchdogTimer);
     if (err.name === 'AbortError') {
       if (watchdogFired) {
@@ -4111,12 +4121,21 @@ function viewSession(i) {
   $('sessionViewerHint').textContent = new Date(s.date).toLocaleString() + ' — ' + s.qa.length + ' interactions';
   
   let html = '';
+  let lastItemTime = null;
   s.qa.forEach(item => {
     if (item.role === 'candidate') {
       html += `<div style="color:var(--accent); margin-bottom:15px; background:rgba(29, 158, 117, 0.1); padding:10px; border-radius:6px; border-left:3px solid var(--accent);"><b>👤 Candidate:</b><br/>${esc(item.text)}</div>`;
     } else {
+      let dur = item.durationSec;
+      if (!dur && item.time && lastItemTime) {
+        const delta = ((new Date(item.time).getTime() - lastItemTime) / 1000).toFixed(1);
+        if (delta > 0 && delta < 180) dur = delta;
+      }
+      if (item.time) lastItemTime = new Date(item.time).getTime();
+      const timeBadge = dur ? `<span style="font-size:10px; font-family:Consolas,monospace; font-weight:700; color:#38bdf8; background:rgba(56,189,248,0.14); border:1px solid rgba(56,189,248,0.35); padding:1px 6px; border-radius:4px; margin-left:8px;">⏱️ ${dur}s</span>` : '';
+
       if (item.question) {
-        html += `<div style="color:#f59e0b; margin-bottom:5px; background:rgba(245, 158, 11, 0.1); padding:10px; border-radius:6px 6px 0 0; border-left:3px solid #f59e0b;"><b>🎤 Interviewer:</b><br/>${esc(item.question)}</div>`;
+        html += `<div style="color:#f59e0b; margin-bottom:5px; background:rgba(245, 158, 11, 0.1); padding:10px; border-radius:6px 6px 0 0; border-left:3px solid #f59e0b; display:flex; justify-content:space-between; align-items:flex-start;"><div><b>🎤 Interviewer:</b><br/>${esc(item.question)}</div>${timeBadge}</div>`;
       }
       if (item.screenshot) {
         const paths = item.screenshot.split(';').filter(Boolean);

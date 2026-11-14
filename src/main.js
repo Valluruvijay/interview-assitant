@@ -948,11 +948,19 @@ ipcMain.on('export-session-pdf', async (_, session) => {
   content += `Date: ${new Date(session.date).toLocaleString()}\n`;
   content += `Role: ${session.role || 'General'}\n`;
   content += `Company: ${session.company || 'N/A'}\n\n${'='.repeat(60)}\n\n`;
+  let lastTime = null;
   session.qa.forEach((item, i) => {
     if (item.role === 'candidate') {
       content += `Candidate note ${i + 1}: ${item.text || ''}\n\n${'─'.repeat(40)}\n\n`;
     } else {
-      content += `Q${i + 1}: ${item.question || ''}\n\nA: ${item.answer || ''}\n\n${'─'.repeat(40)}\n\n`;
+      let duration = item.durationSec;
+      if (!duration && item.time && lastTime) {
+        const delta = ((new Date(item.time).getTime() - lastTime) / 1000).toFixed(1);
+        if (delta > 0 && delta < 180) duration = delta;
+      }
+      if (item.time) lastTime = new Date(item.time).getTime();
+      const timeStr = duration ? ` [⏱️ ${duration}s response time]` : '';
+      content += `Q${i + 1}${timeStr}: ${item.question || ''}\n\nA: ${item.answer || ''}\n\n${'─'.repeat(40)}\n\n`;
     }
   });
   fs.writeFileSync(filePath, content, 'utf8');
