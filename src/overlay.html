@@ -187,9 +187,35 @@ kbd { font-size:10px; background:rgba(255,255,255,0.07); border:1px solid rgba(2
   font-size:9px;
   text-transform:uppercase;
   letter-spacing:0.8px;
-  color:rgba(29,158,117,0.55);
+  color:rgba(29,158,117,0.7);
   margin-bottom:3px;
   font-weight:600;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.bubble-a .bubble-label:hover {
+  color: #38bdf8;
+}
+.bubble-a .bubble-label .jump-pill {
+  font-size: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #38bdf8;
+  opacity: 0.85;
+  transition: all 0.15s;
+}
+.bubble-a .bubble-label:hover .jump-pill {
+  opacity: 1;
+  background: rgba(56, 189, 248, 0.25);
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.4);
 }
 .bubble-a .bubble-content {
   white-space:pre-wrap;
@@ -687,6 +713,7 @@ let currentPair = null;
 let currentAnswerContent = null;
 let qaCount = 0;
 let autoScroll = true;
+let userRequestedAnswerScroll = false;
 
 function changeOverlayOpacity(val) {
   const op = Math.max(0.2, Math.min(1.0, parseFloat(val) / 100));
@@ -741,6 +768,7 @@ function clearOverlayChat() {
 }
 function toggleFollowUpOverlay() { ipcRenderer.send('toggle-followup-from-overlay'); }
 function captureScreen() { 
+  userRequestedAnswerScroll = true;
   $('st').textContent = 'Capturing screen...';
   ipcRenderer.send('capture-screen');
 }
@@ -776,6 +804,7 @@ ipcRenderer.on('screenshot-part-captured', (_, data) => {
 function solveMultiParts() {
   if (multiPartQueue.length === 0) return;
   const count = multiPartQueue.length;
+  userRequestedAnswerScroll = true;
   showOverlayToast(`🧠 Solving ${count}-Part Problem…`);
   ipcRenderer.send('process-multi-screenshot', multiPartQueue);
   clearMultiParts();
@@ -912,8 +941,15 @@ function appendRejectedQuestion(text) {
 }
 
 function sendPendingQuestion() {
+  userRequestedAnswerScroll = true;
   ipcRenderer.send('send-pending-question');
+  setTimeout(() => scrollToCurrentQuestion(), 60);
 }
+
+ipcRenderer.on('user-triggered-answer', () => {
+  userRequestedAnswerScroll = true;
+  setTimeout(() => scrollToCurrentQuestion(), 60);
+});
 
 function discardPendingQuestion() {
   ipcRenderer.send('discard-pending-question');
@@ -1168,7 +1204,32 @@ ipcRenderer.on('show-question', (_, q) => {
   aBubble.className = 'bubble bubble-a';
   const aLabel = document.createElement('div');
   aLabel.className = 'bubble-label';
-  aLabel.textContent = '\u26A1 AI Answer';
+  aLabel.innerHTML = '<span>⚡ AI Answer</span><span class="jump-pill" title="Jump to question top">⬆ Question</span>';
+  aLabel.title = 'Click to jump to this question & talking points';
+  aLabel.onclick = (e) => {
+    e.stopPropagation();
+    qBubble.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    showOverlayToast('⬆ Current question');
+  };
+
+  // Clicking answer label or bubble border/header jumps to question
+  aBubble.addEventListener('click', (e) => {
+    const sel = window.getSelection();
+    if (sel && sel.toString().length > 0) return;
+    if (e.target.closest('button') || e.target.closest('pre') || e.target.closest('code') || e.target.closest('a') || e.target.closest('.followup-item')) return;
+    if (e.target === aBubble || e.target.closest('.bubble-label')) {
+      qBubble.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      showOverlayToast('⬆ Current question');
+    }
+  });
+
+  // Double-clicking answer bubble also jumps to question
+  aBubble.ondblclick = (e) => {
+    if (e.target.closest('pre') || e.target.closest('code') || e.target.closest('button')) return;
+    qBubble.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    showOverlayToast('⬆ Current question');
+  };
+
   currentAnswerContent = document.createElement('div');
   currentAnswerContent.className = 'bubble-content';
 
@@ -1184,8 +1245,19 @@ ipcRenderer.on('show-question', (_, q) => {
   currentPair.appendChild(aBubble);
   $('chatContainer').appendChild(currentPair);
 
-  $('st').textContent = 'Generating\u2026';
+  $('st').textContent = 'Generating…';
   $('orb').style.background = '#FAC775';
+
+  if (userRequestedAnswerScroll) {
+    userRequestedAnswerScroll = false;
+    setTimeout(() => {
+      if (currentPair) {
+        currentPair.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        scrollToCurrentQuestion();
+      }
+    }, 40);
+  }
 });
 
 let pendingChunkUpdate = false;
@@ -1213,8 +1285,10 @@ function sendFollowUpFromPill(btn) {
   const cleanQ = decodeURIComponent(raw).trim();
   if (!cleanQ) return;
   console.log('[Anticipated Follow-up] User clicked Ask for:', cleanQ);
+  userRequestedAnswerScroll = true;
   ipcRenderer.send('ask-followup', cleanQ);
   showOverlayToast('⚡ Asking: ' + (cleanQ.length > 25 ? cleanQ.slice(0, 25) + '...' : cleanQ));
+  setTimeout(() => scrollToCurrentQuestion(), 60);
 }
 
 ipcRenderer.on('answer-done', () => {
@@ -1312,11 +1386,13 @@ function sendFollowUp() {
   const input = $('followUpInput');
   const q = input.value.trim();
   if (q) {
+    userRequestedAnswerScroll = true;
     ipcRenderer.send('ask-followup', q);
     input.value = '';
     $('st').textContent = 'Generating answer…';
     // Hand keyboard focus back to whatever app was in front
     ipcRenderer.send('overlay-release-focus');
+    setTimeout(() => scrollToCurrentQuestion(), 60);
   }
 }
 
@@ -1335,7 +1411,12 @@ window.addEventListener('keydown', e => {
     e.preventDefault();
     toggleShieldFromOverlay();
   }
-  if (e.altKey && e.key.toLowerCase() === 'a') { ipcRenderer.send('force-trigger-answer'); }
+  if (e.altKey && e.key.toLowerCase() === 'a') {
+    e.preventDefault();
+    userRequestedAnswerScroll = true;
+    ipcRenderer.send('force-trigger-answer');
+    setTimeout(() => scrollToCurrentQuestion(), 60);
+  }
   if (e.altKey && e.key.toLowerCase() === 'x') { clearOverlayChat(); }
 });
 

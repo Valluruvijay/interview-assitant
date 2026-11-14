@@ -462,7 +462,10 @@ function safeRegisterShortcut(shortcut, callback) {
 
 ipcMain.on('toggle-overlay-visibility', () => toggleOverlayVisibility());
 ipcMain.on('show-control-panel', () => toggleControlPanel());
-ipcMain.on('force-trigger-answer', () => safeSend(controlWin, 'force-trigger-answer'));
+ipcMain.on('force-trigger-answer', () => {
+  safeSend(controlWin, 'force-trigger-answer');
+  safeSend(overlayWin, 'user-triggered-answer');
+});
 ipcMain.on('switch-overlay-model', (_, data) => safeSend(controlWin, 'switch-overlay-model', data));
 ipcMain.on('sync-active-model', (_, data) => safeSend(overlayWin, 'sync-active-model', data));
 
@@ -475,7 +478,10 @@ ipcMain.on('auto-send-state', (_, enabled) => {
 ipcMain.on('pending-question', (_, data) => safeSend(overlayWin, 'pending-question', data));
 ipcMain.on('pending-question-rejected', (_, data) => safeSend(overlayWin, 'pending-question-rejected', data));
 ipcMain.on('pending-question-cleared', () => safeSend(overlayWin, 'pending-question-cleared'));
-ipcMain.on('send-pending-question', () => safeSend(controlWin, 'send-pending-question'));
+ipcMain.on('send-pending-question', () => {
+  safeSend(controlWin, 'send-pending-question');
+  safeSend(overlayWin, 'user-triggered-answer');
+});
 ipcMain.on('discard-pending-question', () => safeSend(controlWin, 'discard-pending-question'));
 
 // Focus borrowing for the overlay's follow-up box. The overlay is normally
@@ -553,6 +559,7 @@ function registerShortcuts() {
   ['CommandOrControl+Shift+A', 'Alt+A'].forEach(key => {
     safeRegisterShortcut(key, () => {
       safeSend(controlWin, 'force-trigger-answer');
+      safeSend(overlayWin, 'user-triggered-answer');
     });
   });
 
@@ -560,6 +567,7 @@ function registerShortcuts() {
   ['CommandOrControl+Shift+S', 'Alt+S'].forEach(key => {
     safeRegisterShortcut(key, () => {
       safeSend(controlWin, 'capture-screen-trigger');
+      safeSend(overlayWin, 'user-triggered-answer');
     });
   });
 
@@ -640,7 +648,10 @@ ipcMain.on('answer-clear', () => {
   safeSend(controlWin, 'abort-generation');
 });
 ipcMain.on('abort-generation', () => safeSend(controlWin, 'abort-generation'));
-ipcMain.on('force-trigger-answer', () => safeSend(controlWin, 'force-trigger-answer'));
+ipcMain.on('force-trigger-answer', () => {
+  safeSend(controlWin, 'force-trigger-answer');
+  safeSend(overlayWin, 'user-triggered-answer');
+});
 
 // Test AI Window IPC
 ipcMain.on('open-test-chat', () => {
