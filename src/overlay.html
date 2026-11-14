@@ -353,12 +353,17 @@ strong { font-weight:600; color:var(--accent); }
 .scroll-nav {
   position: absolute;
   right: 12px;
-  bottom: 80px;
+  bottom: 135px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   z-index: 99;
   -webkit-app-region: no-drag;
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+.scroll-nav:hover {
+  opacity: 1;
 }
 .scroll-nav-btn {
   background: rgba(15, 23, 42, 0.9);
@@ -570,8 +575,6 @@ strong { font-weight:600; color:var(--accent); }
       <button class="capture-btn" id="solveMultiBtn" onclick="solveMultiParts()" style="display:none; background: #16a34a; border-color: #22c55e; color: #fff; font-weight: bold;" title="Send all captured parts to AI">⚡ Solve (0)</button>
       <button class="capture-btn" id="clearMultiBtn" onclick="clearMultiParts()" style="display:none; color: #ef4444; padding: 2px 6px;" title="Discard queued screenshot parts">✕</button>
       <button class="capture-btn" id="overlayFollowUpBtn" onclick="toggleFollowUpOverlay()">🔁 Follow-up: OFF</button>
-      <button class="capture-btn" onclick="scrollToCurrentQuestion()" title="Scroll up to Current Question (Top) [Alt+Up]">⬆ Q</button>
-      <button class="capture-btn" onclick="scrollToDirectBottom()" title="Scroll directly down to Latest Answer [Alt+Down]">⬇ Down</button>
       <button class="capture-btn" id="shieldToggleBtn" onclick="toggleShieldFromOverlay()" title="Anti-Tab Switch Shield (Alt+T): Prevents exam websites from detecting clicks on overlay as tab changes" style="border-color: rgba(34, 197, 94, 0.4); color: #22c55e;">🛡️ Shield: ON</button>
       <button class="end-btn" onclick="endSession()">❌ End</button>
     </div>
