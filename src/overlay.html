@@ -173,6 +173,44 @@ kbd { font-size:10px; background:rgba(255,255,255,0.07); border:1px solid rgba(2
   color:rgba(29,158,117,0.7);
   margin-bottom:3px;
   font-weight:600;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.q-timer-badge {
+  font-size: 8.5px;
+  font-family: Consolas, monospace;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #fbbf24;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1.35;
+  user-select: none;
+  transition: all 0.2s ease;
+}
+.q-timer-badge.ready {
+  background: rgba(34, 197, 94, 0.18);
+  border-color: rgba(34, 197, 94, 0.5);
+  color: #4ade80;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.35);
+  animation: timerPulse 1s infinite alternate;
+}
+.q-timer-badge.done {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: #38bdf8;
+  animation: none;
+}
+@keyframes timerPulse {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.2); }
 }
 
 
@@ -717,6 +755,10 @@ let currentAnswerContent = null;
 let qaCount = 0;
 let autoScroll = true;
 let userRequestedAnswerScroll = false;
+let currentTimerInterval = null;
+let currentQuestionStartTime = null;
+let currentTTFT = null;
+let activeTimerBadge = null;
 
 function changeOverlayOpacity(val) {
   const op = Math.max(0.2, Math.min(1.0, parseFloat(val) / 100));
@@ -1186,9 +1228,20 @@ ipcRenderer.on('interviewer-interim', (_, text) => {
   const contentEl = currentInterviewerPair.querySelector('.interviewer-content');
   if (contentEl) contentEl.innerText = text;
 });
-ipcRenderer.on('show-question', (_, q) => {
+ipcRenderer.on('show-question', (_, qData) => {
   if (currentCandidatePair) { currentCandidatePair = null; }
   if (currentInterviewerPair) { currentInterviewerPair.remove(); currentInterviewerPair = null; }
+  
+  if (currentTimerInterval) {
+    clearInterval(currentTimerInterval);
+    currentTimerInterval = null;
+  }
+
+  const q = (typeof qData === 'object' && qData && qData.question) ? qData.question : qData;
+  const qStart = (typeof qData === 'object' && qData && qData.startTime) ? qData.startTime : Date.now();
+  currentQuestionStartTime = qStart;
+  currentTTFT = null;
+
   currentQ = q; currentA = '';
   const idleEl = $('idle');
   if (idleEl) hide(idleEl);
@@ -1200,7 +1253,39 @@ ipcRenderer.on('show-question', (_, q) => {
   // Question bubble
   const qBubble = document.createElement('div');
   qBubble.className = 'bubble bubble-q';
-  qBubble.innerHTML = '<div class="bubble-label">\uD83C\uDF99 Interviewer</div><div class="bubble-content">' + escapeHtml(q) + '</div>';
+
+  const qLabel = document.createElement('div');
+  qLabel.className = 'bubble-label';
+  const qTitle = document.createElement('span');
+  qTitle.textContent = '\uD83C\uDF99 Interviewer';
+
+  const timerBadge = document.createElement('span');
+  timerBadge.className = 'q-timer-badge';
+  timerBadge.innerHTML = '⏱️ 0.0s';
+  timerBadge.title = 'Measuring AI response time…';
+
+  qLabel.appendChild(qTitle);
+  qLabel.appendChild(timerBadge);
+
+  const qContent = document.createElement('div');
+  qContent.className = 'bubble-content';
+  qContent.innerHTML = escapeHtml(q);
+
+  qBubble.appendChild(qLabel);
+  qBubble.appendChild(qContent);
+
+  activeTimerBadge = timerBadge;
+
+  // Live timer tick every 100ms
+  currentTimerInterval = setInterval(() => {
+    if (!activeTimerBadge || !currentQuestionStartTime) return;
+    const elapsed = (Date.now() - currentQuestionStartTime) / 1000;
+    if (!currentTTFT) {
+      activeTimerBadge.innerHTML = `⏱️ ${elapsed.toFixed(1)}s`;
+    } else {
+      activeTimerBadge.innerHTML = `⚡ ${currentTTFT}s <span style="opacity:0.65;font-size:8px;font-weight:normal;">(${elapsed.toFixed(1)}s)</span>`;
+    }
+  }, 100);
 
   // Answer bubble
   const aBubble = document.createElement('div');
@@ -1269,6 +1354,15 @@ ipcRenderer.on('answer-chunk', (_, chunk) => {
   if (!currentAnswerContent) return;
   currentA += chunk;
   
+  // Capture TTFT (Time To First Token) at the exact moment first text arrives
+  if (!currentTTFT && currentQuestionStartTime && activeTimerBadge) {
+    const elapsed = ((Date.now() - currentQuestionStartTime) / 1000).toFixed(1);
+    currentTTFT = elapsed;
+    activeTimerBadge.classList.add('ready');
+    activeTimerBadge.innerHTML = `⚡ ${currentTTFT}s`;
+    activeTimerBadge.title = `Answer started arriving in ${currentTTFT}s`;
+  }
+
   if (!pendingChunkUpdate) {
     pendingChunkUpdate = true;
     requestAnimationFrame(() => {
@@ -1295,6 +1389,20 @@ function sendFollowUpFromPill(btn) {
 }
 
 ipcRenderer.on('answer-done', () => {
+  if (currentTimerInterval) {
+    clearInterval(currentTimerInterval);
+    currentTimerInterval = null;
+  }
+  if (activeTimerBadge && currentQuestionStartTime) {
+    const totalSec = ((Date.now() - currentQuestionStartTime) / 1000).toFixed(1);
+    const ttftDisplay = currentTTFT ? `${currentTTFT}s` : `${totalSec}s`;
+    activeTimerBadge.classList.remove('ready');
+    activeTimerBadge.classList.add('done');
+    activeTimerBadge.innerHTML = `⏱️ ${ttftDisplay} <span style="opacity:0.65;font-size:8px;font-weight:normal;">(${totalSec}s)</span>`;
+    activeTimerBadge.title = `Answer started in ${ttftDisplay} · Full answer completed in ${totalSec}s`;
+    activeTimerBadge = null;
+  }
+
   if (currentAnswerContent) {
     currentAnswerContent.innerHTML = renderMarkdown(currentA);
   }
@@ -1323,6 +1431,14 @@ ipcRenderer.on('answer-done', () => {
 });
 
 ipcRenderer.on('answer-clear', () => {
+  if (currentTimerInterval) {
+    clearInterval(currentTimerInterval);
+    currentTimerInterval = null;
+  }
+  activeTimerBadge = null;
+  currentQuestionStartTime = null;
+  currentTTFT = null;
+
   $('chatContainer').innerHTML = '';
   const idle = document.createElement('div');
   idle.className = 'idle';
