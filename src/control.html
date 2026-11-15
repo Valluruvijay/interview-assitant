@@ -435,9 +435,8 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
           <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
           <div class="wave-bar"></div>
         </div>
-        <div class="mic-btn-row" style="display:flex; gap:10px; margin-bottom:8px;">
-          <button class="mic-btn btn-primary" id="startInterviewBtn" onclick="startFullInterview()" style="flex:2; background:var(--accent);border-color:var(--accent);color:#fff;font-size:14px;padding:12px;">⚡ Start Interview</button>
-          <button class="mic-btn btn-secondary" onclick="openTestBox()" style="flex:1; font-size:14px; padding:12px;">🧪 Test Box</button>
+        <div class="mic-btn-row" style="margin-bottom:8px;">
+          <button class="mic-btn btn-primary" id="startInterviewBtn" onclick="startFullInterview()" style="width:100%; background:var(--accent);border-color:var(--accent);color:#fff;font-size:14px;padding:12px;">⚡ Start Interview</button>
         </div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; background:var(--bg3); padding:8px; border-radius:6px; border:1px solid var(--border);">
            <label style="font-size:12px; font-weight:600; color:var(--text1); cursor:pointer; display:flex; align-items:center; gap:6px; flex:1;">
@@ -618,7 +617,6 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
 
 const { ipcRenderer } = require('electron');
 
-let testChatHistory = [];
 let isNextFollowUp = false;
 
 ipcRenderer.on('toggle-followup-remote', () => {
@@ -855,13 +853,6 @@ async function startFullInterview() {
   const shouldStart = await showChatGPTPromptPreview();
   if (shouldStart) {
     beginInterviewListening();
-  }
-}
-
-async function openTestBox() {
-  const shouldStart = await showChatGPTPromptPreview();
-  if (shouldStart) {
-    ipcRenderer.send('open-test-chat');
   }
 }
 
@@ -4075,14 +4066,9 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
 }
 
 // ── SESSION ───────────────────────────────────────────────
-function autoSaveSession(isTest = false) {
-  if (isTest) {
-    if (!testChatHistory.length) return;
-    ipcRenderer.send('save-session', { date: new Date().toISOString(), role: 'Test Box Session', company: '', qa: testChatHistory });
-  } else {
-    if (!currentSessionQA.length) return;
-    ipcRenderer.send('save-session', { date: sessionStart, role: currentRole, company: '', qa: currentSessionQA });
-  }
+function autoSaveSession() {
+  if (!currentSessionQA.length) return;
+  ipcRenderer.send('save-session', { date: sessionStart, role: currentRole, company: '', qa: currentSessionQA });
 }
 
 function clearAll() {
@@ -4273,10 +4259,6 @@ ipcRenderer.on('ask-followup', (_, text) => {
     setStatus('⚡ Generating answer for: ' + (text.length > 35 ? text.substring(0, 35) + '…' : text));
     askQuestion(text.trim());
   }
-});
-
-ipcRenderer.on('test-ai-request', (_, text) => {
-  askQuestion(text, null, true);
 });
 
 ipcRenderer.on('end-session-remote', () => {

@@ -48,7 +48,6 @@ app.commandLine.appendSwitch('allow-http-background-page');
 
 let overlayWin = null;
 let controlWin = null;
-let testChatWin = null;
 let currentOpacity = 0.92;
 let overlayVisible = true;
 let antiTabSwitchShield = true; // Solution C: Strict non-activating overlay
@@ -617,10 +616,6 @@ ipcMain.on('enter-stealth-mode', () => {
     controlWin.setTitle('');
     controlWin.setSkipTaskbar(true);
   }
-  if (testChatWin) {
-    testChatWin.setTitle('');
-    testChatWin.setSkipTaskbar(true);
-  }
 });
 
 ipcMain.on('exit-stealth-mode', () => {
@@ -652,34 +647,6 @@ ipcMain.on('force-trigger-answer', () => {
   safeSend(controlWin, 'force-trigger-answer');
   safeSend(overlayWin, 'user-triggered-answer');
 });
-
-// Test AI Window IPC
-ipcMain.on('open-test-chat', () => {
-  if (testChatWin) {
-    testChatWin.showInactive();
-    return;
-  }
-  testChatWin = new BrowserWindow({
-    width: 480,
-    height: 600,
-    frame: false,
-    show: false,
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
-    }
-  });
-  testChatWin.loadFile('src/test-chat.html');
-  testChatWin.once('ready-to-show', () => {
-    if (testChatWin && !testChatWin.isDestroyed()) testChatWin.showInactive();
-  });
-  testChatWin.on('closed', () => { testChatWin = null; });
-});
-ipcMain.on('test-ai-request', (_, text) => safeSend(controlWin, 'test-ai-request', text));
-ipcMain.on('test-ai-chunk', (_, chunk) => safeSend(testChatWin, 'test-ai-chunk', chunk));
-ipcMain.on('test-ai-done', () => safeSend(testChatWin, 'test-ai-done'));
-ipcMain.on('test-ai-error', (_, err) => safeSend(testChatWin, 'test-ai-error', err));
-
 
 ipcMain.on('set-opacity', (_, val) => {
   if (!overlayWin) return;
