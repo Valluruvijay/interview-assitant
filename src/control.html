@@ -301,10 +301,27 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
           <option value="groq">Groq</option>
           <option value="chatgpt">ChatGPT (OpenAI)</option>
           <option value="deepseek">DeepSeek</option>
+          <option value="openrouter">OpenRouter (Any Model)</option>
         </select>
         <select id="aiModelSelect" style="flex:1;" onchange="saveAiModel()">
           <!-- Populated dynamically -->
         </select>
+      </div>
+
+      <!-- OpenRouter Custom Model & Live Catalog Controls -->
+      <div id="openrouterCustomRow" style="display:none; margin-top:8px;">
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input type="text" id="openrouterCustomModelInput" placeholder="Enter ANY OpenRouter Model ID (e.g. anthropic/claude-3.7-sonnet or deepseek/deepseek-r1)..." 
+            style="flex:1; font-size:12px; padding:6px 10px; background:var(--bg2); color:var(--text); border:1px solid var(--border); border-radius:4px;"
+            oninput="handleOpenRouterCustomInput()" />
+          <button type="button" class="btn-sm" id="btnFetchOpenRouterModels" title="Fetch live catalog of 470+ models from OpenRouter API" onclick="fetchLiveOpenRouterModels()" style="padding:6px 10px; font-size:11px; white-space:nowrap; cursor:pointer;">
+            🔄 Fetch All Models
+          </button>
+        </div>
+        <div style="font-size:10px; color:var(--text3); margin-top:4px; display:flex; justify-content:space-between; align-items:center;">
+          <span>💡 Select a model above, click <b>Fetch All Models</b> to load OpenRouter's 470+ catalog, or type any custom model slug directly.</span>
+          <span id="openrouterModelCount" style="color:var(--accent); font-weight:600;"></span>
+        </div>
       </div>
       <div style="margin-top:10px;">
         <input type="password" id="apiKey" style="width:100%;" placeholder="Enter API Key..." oninput="saveApiKey()" />
@@ -713,6 +730,13 @@ const PROVIDERS = {
     hint: 'Get yours at platform.deepseek.com · Stored locally only.',
     apiBase: 'https://api.deepseek.com/v1',
     model: 'deepseek-flash',
+  },
+  openrouter: {
+    label: 'OpenRouter API Key',
+    placeholder: 'sk-or-v1-...',
+    hint: 'Get your key at openrouter.ai · Choose ANY model (Claude, DeepSeek, OpenAI, Gemini, Llama, etc.)',
+    apiBase: 'https://openrouter.ai/api/v1',
+    model: 'anthropic/claude-3.7-sonnet',
   }
 };
 
@@ -940,6 +964,11 @@ ipcRenderer.on('switch-overlay-model', (_, { provider, model }) => {
     $('aiProviderSelect').value = provider;
     handleAiProviderChange();
     if (model) {
+      PROVIDERS[provider].model = model;
+      if (provider === 'openrouter') {
+        const customInput = $('openrouterCustomModelInput');
+        if (customInput) customInput.value = model;
+      }
       $('aiModelSelect').value = model;
       saveAiModel();
     }
@@ -952,10 +981,15 @@ function handleAiProviderChange() {
   const provider = $('aiProviderSelect').value;
   chatgptPromptApproved = false;
   
-  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'zai'].includes(provider)) {
+  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'zai', 'openrouter'].includes(provider)) {
     $('editChatgptPromptBtn').style.display = 'block';
   } else {
     $('editChatgptPromptBtn').style.display = 'none';
+  }
+
+  const customRow = $('openrouterCustomRow');
+  if (customRow) {
+    customRow.style.display = (provider === 'openrouter') ? 'block' : 'none';
   }
 
   // Save old API key before switching
@@ -980,6 +1014,12 @@ function handleAiProviderChange() {
   $('apiKey').value = savedKey;
 
   populateAiModels(provider);
+  if (provider === 'openrouter') {
+    const customInput = $('openrouterCustomModelInput');
+    if (customInput) {
+      customInput.value = PROVIDERS.openrouter.model || 'anthropic/claude-3.7-sonnet';
+    }
+  }
   saveS({ provider });
   setStatus('Switched AI Provider to ' + provider.toUpperCase());
 }
@@ -1002,7 +1042,7 @@ function handleModelReasoningChange() {
   window.currentReasoningEffort = effort;
   saveS({ reasoningEffort: effort, lunaReasoningEffort: effort });
   updateModelTuningUI();
-  const provName = currentProvider === 'chatgpt' ? 'ChatGPT (GPT-6 Luna)' : (currentProvider.startsWith('gemini') ? 'Google Gemini' : 'DeepSeek');
+  const provName = currentProvider === 'chatgpt' ? 'ChatGPT (GPT-6 Luna)' : (currentProvider.startsWith('gemini') ? 'Google Gemini' : (currentProvider === 'openrouter' ? 'OpenRouter' : 'DeepSeek'));
   setStatus(provName + ': ' + (effort === 'none' ? 'Option A (Custom Temp)' : 'Option B (Reasoning ' + effort.toUpperCase() + ')'));
 }
 
@@ -1027,7 +1067,8 @@ function updateModelTuningUI() {
   // Check if provider/model supports reasoning effort parameter
   const isReasoningSupported = (prov === 'chatgpt' && (model.includes('luna') || model.includes('o1') || model.includes('o3'))) ||
                                (prov === 'gemini' || prov === 'gemini2') ||
-                               (prov === 'deepseek');
+                               (prov === 'deepseek') ||
+                               (prov === 'openrouter' && (model.includes('r1') || model.includes('reason') || model.includes('o1') || model.includes('o3') || model.includes('think') || model.includes('claude-3-7')));
 
   if (isReasoningSupported) {
     if (reasonRow) reasonRow.style.display = 'block';
@@ -1037,6 +1078,7 @@ function updateModelTuningUI() {
       if (prov === 'chatgpt') reasonLabel.textContent = 'GPT-6 Luna Reasoning Mode';
       else if (prov.startsWith('gemini')) reasonLabel.textContent = 'Gemini Reasoning / Thinking Mode';
       else if (prov === 'deepseek') reasonLabel.textContent = 'DeepSeek Reasoning / Thinking Mode';
+      else if (prov === 'openrouter') reasonLabel.textContent = 'OpenRouter Reasoning Mode';
     }
 
     const effort = reasonSelect?.value || window.currentReasoningEffort || 'none';
@@ -1051,6 +1093,8 @@ function updateModelTuningUI() {
           tempHint.textContent = 'Option A Active: Thinking disabled for instant responses. Custom temperature is active.';
         } else if (prov === 'deepseek') {
           tempHint.textContent = 'Option A Active: DeepSeek standard fast mode. Recommended 0.30 for deterministic Apex.';
+        } else if (prov === 'openrouter') {
+          tempHint.textContent = 'Option A Active: OpenRouter custom temperature active (0.20-0.30 recommended for technical questions).';
         } else {
           tempHint.textContent = 'Option A Active: Custom temperature is active. Fast, zero-lag streaming.';
         }
@@ -1184,6 +1228,28 @@ function populateAiModels(provider) {
     if (!models.map(m => m.id).includes(PROVIDERS.deepseek.model)) {
       PROVIDERS.deepseek.model = 'deepseek-flash';
     }
+  } else if (provider === 'openrouter') {
+    models = window._openrouterFetchedModels || [
+      { id: 'anthropic/claude-3.7-sonnet', label: 'Claude 3.7 Sonnet (Anthropic · Flagship)' },
+      { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet (Anthropic · Coding)' },
+      { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1 (Reasoning Flagship)' },
+      { id: 'deepseek/deepseek-chat', label: 'DeepSeek V3 / Chat (Ultra-Fast)' },
+      { id: 'openai/gpt-4o', label: 'GPT-4o (OpenAI Omni Flagship)' },
+      { id: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (OpenAI Fast)' },
+      { id: 'openai/o3-mini', label: 'OpenAI o3-mini (High-Speed Reasoning)' },
+      { id: 'openai/o1', label: 'OpenAI o1 (Deep Reasoning)' },
+      { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Google)' },
+      { id: 'google/gemini-2.0-flash-exp:free', label: 'Gemini 2.0 Flash (Free 🎁)' },
+      { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B Instruct (Meta)' },
+      { id: 'meta-llama/llama-3.1-405b-instruct', label: 'Llama 3.1 405B Instruct (Meta)' },
+      { id: 'qwen/qwen-2.5-coder-32b-instruct', label: 'Qwen 2.5 Coder 32B (Alibaba)' },
+      { id: 'mistralai/mistral-large-2411', label: 'Mistral Large (Mistral AI)' },
+      { id: 'cohere/command-r-plus', label: 'Command R+ (Cohere Enterprise)' },
+      { id: 'custom', label: '✏️ Enter Custom Model ID below...' }
+    ];
+    if (PROVIDERS.openrouter.model && !models.map(m => m.id).includes(PROVIDERS.openrouter.model)) {
+      models.splice(models.length - 1, 0, { id: PROVIDERS.openrouter.model, label: `📌 Custom: ${PROVIDERS.openrouter.model}` });
+    }
   }
 
   models.forEach(m => {
@@ -1193,22 +1259,156 @@ function populateAiModels(provider) {
     modelSelect.appendChild(opt);
   });
   
-  modelSelect.value = PROVIDERS[provider].model;
+  const hasMatchingOpt = Array.from(modelSelect.options).some(o => o.value === PROVIDERS[provider].model);
+  if (hasMatchingOpt) {
+    modelSelect.value = PROVIDERS[provider].model;
+  } else if (provider === 'openrouter') {
+    modelSelect.value = 'custom';
+  } else if (modelSelect.options.length > 0) {
+    modelSelect.value = modelSelect.options[0].value;
+  }
+
+  if (provider === 'openrouter') {
+    const customInput = $('openrouterCustomModelInput');
+    if (customInput && !customInput.value) {
+      customInput.value = PROVIDERS.openrouter.model || 'anthropic/claude-3.7-sonnet';
+    }
+  }
   updateModelTuningUI();
 }
 function saveAiModel() {
   if (!currentProvider) return;
   const selectedModel = $('aiModelSelect').value;
-  PROVIDERS[currentProvider].model = selectedModel;
   
-  if (currentProvider === 'zai') {
+  if (currentProvider === 'openrouter') {
+    if (selectedModel === 'custom') {
+      const input = $('openrouterCustomModelInput');
+      if (input) {
+        input.focus();
+        if (input.value.trim()) {
+          PROVIDERS.openrouter.model = input.value.trim();
+        }
+      }
+    } else {
+      PROVIDERS.openrouter.model = selectedModel;
+      const input = $('openrouterCustomModelInput');
+      if (input) input.value = selectedModel;
+      saveS({ openrouterModel: selectedModel, openrouterCustomModel: selectedModel });
+    }
+    ipcRenderer.send('sync-active-model', { provider: 'openrouter', model: PROVIDERS.openrouter.model });
+  } else if (currentProvider === 'zai') {
     currentZaiModel = selectedModel;
     saveS({ zaiModel: selectedModel });
+    PROVIDERS[currentProvider].model = selectedModel;
   } else {
+    PROVIDERS[currentProvider].model = selectedModel;
     saveS({ [currentProvider + 'Model']: selectedModel });
   }
-  setStatus('Model updated to ' + selectedModel);
+  setStatus('Model updated to ' + PROVIDERS[currentProvider].model);
   updateModelTuningUI();
+}
+
+function handleOpenRouterCustomInput() {
+  const customVal = $('openrouterCustomModelInput').value.trim();
+  if (!customVal) return;
+  PROVIDERS.openrouter.model = customVal;
+  saveS({ openrouterModel: customVal, openrouterCustomModel: customVal });
+  
+  const select = $('aiModelSelect');
+  if (select) {
+    let matched = false;
+    for (let opt of select.options) {
+      if (opt.value === customVal) {
+        select.value = customVal;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      select.value = 'custom';
+    }
+  }
+  ipcRenderer.send('sync-active-model', { provider: 'openrouter', model: customVal });
+  setStatus('OpenRouter active model: ' + customVal);
+  updateModelTuningUI();
+}
+
+async function fetchLiveOpenRouterModels() {
+  const btn = $('btnFetchOpenRouterModels');
+  const countSpan = $('openrouterModelCount');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching…'; }
+  if (countSpan) countSpan.textContent = 'Loading openrouter.ai catalog...';
+  setStatus('Fetching live model catalog from OpenRouter...');
+
+  try {
+    const key = $('apiKey').value.trim();
+    const headers = {};
+    if (key) headers['Authorization'] = `Bearer ${key}`;
+    const res = await fetch('https://openrouter.ai/api/v1/models', { headers });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data || !Array.isArray(data.data)) throw new Error('Invalid format received');
+
+    const popular = [
+      'anthropic/claude-3.7-sonnet',
+      'anthropic/claude-3.5-sonnet',
+      'deepseek/deepseek-r1',
+      'deepseek/deepseek-chat',
+      'openai/gpt-4o',
+      'openai/gpt-4o-mini',
+      'openai/o3-mini',
+      'openai/o1',
+      'google/gemini-2.5-flash',
+      'google/gemini-2.0-flash-exp:free',
+      'meta-llama/llama-3.3-70b-instruct'
+    ];
+
+    const sorted = data.data.sort((a, b) => {
+      const aPop = popular.indexOf(a.id);
+      const bPop = popular.indexOf(b.id);
+      if (aPop !== -1 && bPop !== -1) return aPop - bPop;
+      if (aPop !== -1) return -1;
+      if (bPop !== -1) return 1;
+
+      const aFree = a.pricing?.prompt === '0' || a.id.includes(':free');
+      const bFree = b.pricing?.prompt === '0' || b.id.includes(':free');
+      if (aFree && !bFree) return -1;
+      if (!aFree && bFree) return 1;
+
+      return a.id.localeCompare(b.id);
+    });
+
+    const formatted = sorted.map(m => {
+      const isFree = m.pricing?.prompt === '0' || m.id.includes(':free');
+      const contextK = m.context_length ? ` [${Math.round(m.context_length / 1000)}k ctx]` : '';
+      const freeTag = isFree ? ' 🎁 FREE' : '';
+      return {
+        id: m.id,
+        label: `${m.name || m.id}${freeTag}${contextK}`
+      };
+    });
+
+    formatted.push({ id: 'custom', label: '✏️ Enter Custom Model ID below...' });
+    window._openrouterFetchedModels = formatted;
+
+    populateAiModels('openrouter');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '✅ Updated!';
+      setTimeout(() => { btn.textContent = '🔄 Fetch All Models'; }, 3000);
+    }
+    if (countSpan) countSpan.textContent = `${sorted.length} models loaded`;
+    setStatus(`✓ Loaded ${sorted.length} live models from OpenRouter catalog`);
+  } catch (err) {
+    console.error('Fetch OpenRouter models failed:', err);
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '❌ Failed';
+      setTimeout(() => { btn.textContent = '🔄 Fetch All Models'; }, 3000);
+    }
+    if (countSpan) countSpan.textContent = 'Error: ' + err.message;
+    setStatus('⚠️ Could not fetch OpenRouter models: ' + err.message);
+  }
 }
 
 // ── TEST MODE ─────────────────────────────────────────────
@@ -1317,6 +1517,7 @@ async function mockAskQuestion(question) {
   if (s.gemini2Model) PROVIDERS.gemini2.model = s.gemini2Model;
   if (s.groqModel) PROVIDERS.groq.model = s.groqModel;
   if (s.deepseekModel) PROVIDERS.deepseek.model = s.deepseekModel;
+  if (s.openrouterModel) PROVIDERS.openrouter.model = s.openrouterModel;
 
   if (s.modelTemperature !== undefined) {
     window.currentTemperature = parseFloat(s.modelTemperature);
@@ -1367,8 +1568,15 @@ async function mockAskQuestion(question) {
     $('aiProviderSelect').value = 'chatgpt';
   }
 
-  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'zai'].includes(currentProvider)) {
+  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'zai', 'openrouter'].includes(currentProvider)) {
     $('editChatgptPromptBtn').style.display = 'block';
+  }
+
+  if (currentProvider === 'openrouter') {
+    const customRow = $('openrouterCustomRow');
+    if (customRow) customRow.style.display = 'block';
+    const customInput = $('openrouterCustomModelInput');
+    if (customInput) customInput.value = s.openrouterCustomModel || PROVIDERS.openrouter.model || 'anthropic/claude-3.7-sonnet';
   }
 
   // Populate models dropdown
@@ -3349,7 +3557,7 @@ Main objective: help me communicate my actual Salesforce knowledge confidently, 
 let promptPreviewResolve = null;
 
 function showChatGPTPromptPreview(force = false) {
-  if (!['chatgpt', 'gemini', 'gemini2', 'groq', 'deepseek', 'zai'].includes(currentProvider)) return Promise.resolve(true);
+  if (!['chatgpt', 'gemini', 'gemini2', 'groq', 'deepseek', 'zai', 'openrouter'].includes(currentProvider)) return Promise.resolve(true);
   const modal = $('chatgptPromptPreview');
   const textArea = $('chatgptPromptText');
   const meta = $('chatgptPromptMeta');
@@ -3365,6 +3573,7 @@ function showChatGPTPromptPreview(force = false) {
     else if (currentProvider === 'gemini2') title.textContent = 'Gemini 2 Interview Prompt Preview';
     else if (currentProvider === 'groq') title.textContent = 'Groq Interview Prompt Preview';
     else if (currentProvider === 'deepseek') title.textContent = 'DeepSeek Interview Prompt Preview';
+    else if (currentProvider === 'openrouter') title.textContent = 'OpenRouter Interview Prompt Preview';
     else title.textContent = 'ChatGPT Interview Prompt Preview';
   }
 
@@ -3375,6 +3584,7 @@ function showChatGPTPromptPreview(force = false) {
   else if (currentProvider === 'gemini2') pName = 'Gemini 2';
   if (currentProvider === 'groq') pName = 'Groq';
   if (currentProvider === 'deepseek') pName = 'DeepSeek';
+  if (currentProvider === 'openrouter') pName = 'OpenRouter';
   setStatus(`Editing ${pName} base instructions.`);
 
   return new Promise(resolve => {
@@ -3530,7 +3740,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
   }
 
   // ── Screen images: vision models read the image; text-only models get an OCR transcript ──
-  const VISION_PROVIDERS = ['gemini', 'gemini2', 'groq', 'chatgpt'];
+  const VISION_PROVIDERS = ['gemini', 'gemini2', 'groq', 'chatgpt', 'openrouter'];
   if (imageBase64 && !VISION_PROVIDERS.includes(effectiveProvider)) {
     setStatus('🔍 Reading the screen with a vision model…');
     const rawSettings = window._rawSettings || {};
@@ -3655,7 +3865,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
 
     if (imageBase64) {
       const images = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
-      if (['zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
+      if (['zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek', 'openrouter'].includes(effectiveProvider)) {
         const contentParts = [
           { type: 'text', text: images.length > 1 
               ? `These ${images.length} screenshots are sequential parts of one question. Read all parts together, then answer what is asked. It may be a multiple-choice question, a coding problem, a diagram, or a form. If it is multiple choice, state the correct option with a one-line reason.`
@@ -3687,7 +3897,12 @@ async function askQuestion(qOverride, imageBase64 = null) {
     }
     let modelsToTry = [];
     const selectEl = document.getElementById('aiModelSelect');
-    if (selectEl && selectEl.options.length > 0) {
+    if (effectiveProvider === 'openrouter') {
+      const customInput = $('openrouterCustomModelInput');
+      const customVal = customInput ? customInput.value.trim() : '';
+      const chosen = (selectEl && selectEl.value && selectEl.value !== 'custom') ? selectEl.value : (customVal || PROVIDERS.openrouter.model || 'anthropic/claude-3.7-sonnet');
+      modelsToTry.push(chosen);
+    } else if (selectEl && selectEl.options.length > 0) {
       modelsToTry.push(selectEl.value);
       for (let i = 0; i < selectEl.options.length; i++) {
         if (selectEl.options[i].value !== selectEl.value) {
@@ -3703,11 +3918,15 @@ async function askQuestion(qOverride, imageBase64 = null) {
     let responsesModeActive = false;
     for (let i = 0; i < modelsToTry.length; i++) {
       const currentModel = modelsToTry[i];
-      const isOpenAICompatible = ['zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider);
+      const isOpenAICompatible = ['zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek', 'openrouter'].includes(effectiveProvider);
       const useResponsesApi = effectiveProvider === 'chatgpt' && window.chatgptResponsesEnabled !== false;
 
       if (isOpenAICompatible) {
         headers['Authorization'] = `Bearer ${effectiveKey}`;
+        if (effectiveProvider === 'openrouter') {
+          headers['HTTP-Referer'] = 'https://github.com/interview-assistant';
+          headers['X-Title'] = 'AI Interview Assistant';
+        }
         
         let sanitizedMessages = historyMessages;
         if (effectiveProvider === 'groq' && !currentModel.startsWith('qwen/qwen3.')) {
@@ -3839,6 +4058,17 @@ async function askQuestion(qOverride, imageBase64 = null) {
             requestBody.reasoning_effort = (activeEffort === 'xhigh' ? 'max' : (activeEffort === 'medium' ? 'high' : activeEffort));
             delete requestBody.temperature;
           }
+        } else if (effectiveProvider === 'openrouter') {
+          requestBody.max_tokens = maxTokensBudget;
+          if (activeEffort === 'none') {
+            requestBody.temperature = userTemp;
+          } else {
+            if (currentModel.includes('r1') || currentModel.includes('reason') || currentModel.includes('o1') || currentModel.includes('o3') || currentModel.includes('think')) {
+              delete requestBody.temperature;
+            } else {
+              requestBody.temperature = userTemp;
+            }
+          }
         } else {
           requestBody.max_tokens = maxTokensBudget;
           requestBody.temperature = userTemp;
@@ -3964,7 +4194,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
           }
 
           // Live indicator if reasoning model is streaming reasoning tokens
-          const reasoningContent = p.choices?.[0]?.delta?.reasoning_content;
+          const reasoningContent = p.choices?.[0]?.delta?.reasoning_content || p.choices?.[0]?.delta?.reasoning;
           if (reasoningContent && !fullAnswer) {
             setStatus('🤔 Reasoning in progress…');
           }
@@ -3979,7 +4209,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
             } else if (p.type === 'response.failed' || p.type === 'error') {
               streamError = p.response?.error?.message || p.error?.message || p.message || 'Responses API stream error';
             }
-          } else if (['grok', 'zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
+          } else if (['grok', 'zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek', 'openrouter'].includes(effectiveProvider)) {
             chunk = p.choices?.[0]?.delta?.content || '';
           } else {
             if (p.type === 'content_block_delta' && p.delta?.text) {
