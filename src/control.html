@@ -1267,11 +1267,11 @@ async function mockTranscribeChunk() {
   await new Promise(r => setTimeout(r, 800 + Math.random() * 600));
   return getMockTranscript();
 }
-async function mockAskQuestion(question, isTest = false) {
+async function mockAskQuestion(question) {
   const chunks = MOCK_ANSWERS.default;
   for (const chunk of chunks) {
     await new Promise(r => setTimeout(r, 40 + Math.random() * 60));
-    ipcRenderer.send(isTest ? 'test-ai-chunk' : 'answer-chunk', chunk);
+    ipcRenderer.send('answer-chunk', chunk);
   }
 }
 
@@ -3474,12 +3474,12 @@ function cancelChatGPTPromptPreview() {
   }
 }
 
-async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
+async function askQuestion(qOverride, imageBase64 = null) {
   const qStartTime = Date.now();
   let question = qOverride || $('manualQ').value.trim();
   question = question.replace(/^\[FOLLOW-UP QUESTION\]:?\s*/i, '').trim();
   if (!question && !imageBase64) return;
-  if (isGenerating && !isTest) {
+  if (isGenerating) {
     if (imageBase64) {
       // User captured a new screenshot while an old request is running or stuck!
       // Cancel the old request immediately and proceed with this new screenshot!
@@ -3589,13 +3589,13 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
     imageBase64 = null;
   }
 
-  if (!isTest) ipcRenderer.send('question-asked', { question, startTime: qStartTime });
-  if (!sessionStart && !isTest) { sessionStart = new Date().toISOString(); currentSessionQA = []; }
+  ipcRenderer.send('question-asked', { question, startTime: qStartTime });
+  if (!sessionStart) { sessionStart = new Date().toISOString(); currentSessionQA = []; }
 
   if (!testMode && !effectiveKey) {
     setStatus('⚠ Enter your API key first (or enable Test Mode)');
-    ipcRenderer.send(isTest ? 'test-ai-error' : 'answer-chunk', '⚠ **Missing API Key**\nPlease enter your API key in the control panel to use this model, or turn on Test Mode.');
-    if (!isTest) ipcRenderer.send('answer-done');
+    ipcRenderer.send('answer-chunk', '⚠ **Missing API Key**\nPlease enter your API key in the control panel to use this model, or turn on Test Mode.');
+    ipcRenderer.send('answer-done');
     isGenerating = false;
     $('askBtn').disabled = false;
     return;
@@ -3604,15 +3604,14 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
   if (testMode) {
     setStatus('🧪 Generating mock answer…');
     let fullAnswer = '';
-    await mockAskQuestion(question, isTest);
+    await mockAskQuestion(question);
     fullAnswer = MOCK_ANSWERS.default.join('');
-    ipcRenderer.send(isTest ? 'test-ai-done' : 'answer-done');
+    ipcRenderer.send('answer-done');
     const totalSec = ((Date.now() - qStartTime) / 1000).toFixed(1);
     const qaEntry = { question, answer: fullAnswer, time: new Date().toISOString(), durationSec: parseFloat(totalSec), screenshot: currentScreenshotPath || null };
     currentScreenshotPath = null;
-    if (!isTest) currentSessionQA.push(qaEntry);
-    if (isTest) testChatHistory.push(qaEntry);
-    autoSaveSession(isTest);
+    currentSessionQA.push(qaEntry);
+    autoSaveSession();
     bumpUsage();
     setStatus(`🧪 Mock answer ready in ${totalSec}s — ${currentSessionQA.length} Q&A this session`);
     isGenerating = false;
@@ -3637,7 +3636,7 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
     // ── Conversation memory: replay recent exchanges like a chat thread ──
     // The model sees the thread and decides whether the new question depends on it.
     const historyMessages = [];
-    const memorySource = isTest ? testChatHistory : currentSessionQA;
+    const memorySource = currentSessionQA;
     const exchanges = memorySource.filter(x => x && x.question && x.answer);
     const MAX_HISTORY_CHARS = 14000;
     let keepFrom = Math.max(0, exchanges.length - 8);
@@ -4009,7 +4008,7 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
             }
 
             if (displayChunk) {
-              ipcRenderer.send(isTest ? 'test-ai-chunk' : 'answer-chunk', displayChunk);
+              ipcRenderer.send('answer-chunk', displayChunk);
             }
           }
         } catch {}
@@ -4021,13 +4020,12 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
     fullAnswer = fullAnswer.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
     clearInterval(controlTimerInterval);
-    ipcRenderer.send(isTest ? 'test-ai-done' : 'answer-done');
+    ipcRenderer.send('answer-done');
     const totalSec = ((Date.now() - qStartTime) / 1000).toFixed(1);
     const qaEntry = { question, answer: fullAnswer, time: new Date().toISOString(), durationSec: parseFloat(totalSec), screenshot: currentScreenshotPath || null };
     currentScreenshotPath = null;
-    if (!isTest) currentSessionQA.push(qaEntry);
-    if (isTest) testChatHistory.push(qaEntry);
-    autoSaveSession(isTest);
+    currentSessionQA.push(qaEntry);
+    autoSaveSession();
     bumpUsage();
     let cacheInfo = cachedTokensFound > 0 ? ` ⚡ (Cache Hit: ${cachedTokensFound} tokens)` : '';
     setStatus(`✓ Answer ready in ${totalSec}s — ${currentSessionQA.length} Q&A this session${cacheInfo}`);
@@ -4038,12 +4036,12 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
     if (err.name === 'AbortError') {
       if (watchdogFired) {
         const timeoutMsg = `\n\n⏱️ **Request Timeout (35s)**: The ${effectiveProvider.toUpperCase()} API took too long to respond. Automatically cancelled to prevent app freeze.\n\n👉 **Tip**: Switch to **Google Gemini** or **Groq** in the overlay model selector for ultra-fast responses.`;
-        ipcRenderer.send(isTest ? 'test-ai-error' : 'answer-chunk', timeoutMsg);
+        ipcRenderer.send('answer-chunk', timeoutMsg);
         setStatus('⏱️ AI request timed out (35s limit). Ready for next question.');
       } else {
         setStatus('Answer generation cancelled.');
       }
-      if (!isTest) ipcRenderer.send('answer-done');
+      ipcRenderer.send('answer-done');
     } else {
       let errText = '\n\n⚠ **API Error**: ' + err.message + '\n*(Check your API key and model selection)*';
       if (responsesModeActive && /404|400|not found|unsupported|does not support|unknown endpoint/i.test(err.message)) {
@@ -4052,8 +4050,8 @@ async function askQuestion(qOverride, imageBase64 = null, isTest = false) {
       if (effectiveProvider === 'deepseek' && (err.message.includes('timeout') || err.message.includes('Failed to fetch') || err.message.includes('terminated') || err.message.includes('network'))) {
         errText = '\n\n⚠ **DeepSeek Cloud Server Congestion**:\nDeepSeek\'s official API servers are currently overloaded and exceeding their queue limits.\n\n👉 **Recommended:** Switch to **Google Gemini (Gemini 3.8 Flash)** or **ChatGPT (GPT-6 Luna)** in the model selector while DeepSeek clears their server queue.';
       }
-      ipcRenderer.send(isTest ? 'test-ai-error' : 'answer-chunk', errText);
-      if (!isTest) ipcRenderer.send('answer-done');
+      ipcRenderer.send('answer-chunk', errText);
+      ipcRenderer.send('answer-done');
       setStatus('❌ Error: ' + err.message);
       console.error('API error:', err);
     }
