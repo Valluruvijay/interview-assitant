@@ -926,7 +926,13 @@ ipcMain.on('export-session-pdf', async (_, session) => {
   shell.openPath(filePath);
 });
 
-ipcMain.on('minimize-control', () => controlWin?.minimize());
-ipcMain.on('close-app', () => app.quit());
+ipcMain.on('minimize-control', () => {
+  if (controlWin && !controlWin.isDestroyed()) {
+    controlWin.minimize();
+  }
+});
+ipcMain.on('close-app', () => {
+  app.quit();
+});
 ipcMain.on('overlay-theme', (_, theme) => safeSend(overlayWin, 'set-theme', theme));
 ipcMain.on('overlay-fontsize', (_, size) => safeSend(overlayWin, 'set-fontsize', size));

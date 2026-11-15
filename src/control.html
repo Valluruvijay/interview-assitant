@@ -18,7 +18,7 @@ body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);he
 .tb-name{font-size:13px;font-weight:600;}
 .tb-ver{font-size:10px;color:var(--text3);margin-left:2px;}
 .tb-btns{display:flex;gap:4px;-webkit-app-region:no-drag;}
-.tb-btn{width:28px;height:22px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--text2);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s;}
+.tb-btn{width:28px;height:22px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--text2);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s;-webkit-app-region:no-drag !important;pointer-events:auto !important;}
 .tb-btn:hover{background:var(--bg3);}
 .tb-btn.close:hover{background:rgba(240,149,149,0.15);color:var(--danger);border-color:rgba(240,149,149,0.3);}
 .tabs{display:flex;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0;}
@@ -165,8 +165,8 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
     <span class="tb-ver">v2.0</span>
   </div>
   <div class="tb-btns">
-    <button class="tb-btn" onclick="ipcRenderer.send('minimize-control')" title="Minimize">─</button>
-    <button class="tb-btn close" onclick="closeAppFresh()" title="Quit">✕</button>
+    <button type="button" class="tb-btn" onclick="minimizeControl()" title="Minimize">─</button>
+    <button type="button" class="tb-btn close" onclick="closeAppFresh()" title="Close">✕</button>
   </div>
 </div>
 <div class="tabs">
@@ -287,9 +287,7 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
   <!-- LIVE TAB -->
   <div class="panel active" id="panel-live">
 
-    <div style="display:flex;justify-content:flex-end;margin-bottom:12px; gap:8px; -webkit-app-region: no-drag;">
-      <button class="btn-danger" style="padding:6px 12px;font-size:11px;background:rgba(240,50,50,0.15);" onclick="ipcRenderer.send('close-app')">❌ CLOSE APP</button>
-    </div>
+
 
     <div class="sec">
       <div class="lbl">AI Interviewer Model</div>
@@ -464,7 +462,7 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
           </div>
         </div>
         
-        <div id="massiveDebug" style="background:#450a0a; color:#fca5a5; padding:10px; font-family:monospace; font-size:11px; margin-top:10px; border-radius:4px; max-height:150px; overflow-y:auto; white-space:pre-wrap;">[System Diagnostics Started]...</div>
+        <div id="massiveDebug" style="display:none; background:#450a0a; color:#fca5a5; padding:10px; font-family:monospace; font-size:11px; margin-top:10px; border-radius:4px; max-height:150px; overflow-y:auto; white-space:pre-wrap;">[System Diagnostics Started]...</div>
      <div class="mic-debug" id="micDebug">
           <div class="mic-debug-title">⚠ Microphone Issue</div>
           <div class="mic-debug-text" id="micDebugText"></div>
@@ -524,13 +522,13 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
         <span class="slider-val" id="silenceVal">-45 dB</span>
       </div>
     </div>
-    </div>
     <div class="sec">
       <div class="lbl">Auto-Answer Delay (seconds)</div>
       <div class="slider-row">
         <input type="range" min="1.0" max="5.0" value="1.2" step="0.1" id="delaySlider" oninput="setDelayThreshold(this.value)" />
         <span class="slider-val" id="delayVal">1.2 s</span>
       </div>
+    </div>
     <div class="sec">
       <div class="lbl">Move Overlay to Display</div>
       <select id="displaySelect" onchange="moveToDisplay(this.value)">
@@ -583,8 +581,6 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
     </div>
   </div>
 
-  </div>
-
 </div>
 
 <div class="prompt-preview" id="chatgptPromptPreview">
@@ -616,6 +612,14 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
 <script>
 
 const { ipcRenderer } = require('electron');
+
+function minimizeControl() {
+  ipcRenderer.send('minimize-control');
+}
+
+function closeAppFresh() {
+  ipcRenderer.send('close-app');
+}
 
 let isNextFollowUp = false;
 
