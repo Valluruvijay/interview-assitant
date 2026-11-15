@@ -643,10 +643,6 @@ function showOverlayToast(text) {
 const OVERLAY_MODELS = [
   { value: 'gemini2:gemini-3.8-flash', label: '🟢 Gemini 3.8 Flash' },
   { value: 'chatgpt:gpt-6-luna', label: '⚡ GPT-6 Luna' },
-  { value: 'openrouter:anthropic/claude-3.7-sonnet', label: '🟣 OR: Claude 3.7 Sonnet' },
-  { value: 'openrouter:deepseek/deepseek-r1', label: '🧠 OR: DeepSeek R1' },
-  { value: 'openrouter:deepseek/deepseek-chat', label: '🔷 OR: DeepSeek V3' },
-  { value: 'openrouter:openai/gpt-4o', label: '⚡ OR: GPT-4o' },
   { value: 'deepseek:deepseek-reasoner', label: '🧠 DeepSeek Reasoner' },
   { value: 'deepseek:deepseek-flash', label: '🔷 DeepSeek 4.1 Flash (1017)' },
   { value: 'deepseek:deepseek-v4-pro', label: '🔷 DeepSeek V4 Pro' },
@@ -721,16 +717,8 @@ ipcRenderer.on('sync-active-model', (_, data) => {
   if (!data) return;
   const { provider, model } = data;
   const targetVal = `${provider}:${model}`;
-  let match = OVERLAY_MODELS.find(m => m.value === targetVal);
-  if (!match) {
-    if (provider === 'openrouter') {
-      const shortName = model.split('/').pop() || model;
-      match = { value: targetVal, label: `🟣 OR: ${shortName}` };
-      OVERLAY_MODELS.splice(2, 0, match);
-    } else {
-      match = OVERLAY_MODELS.find(m => m.value.startsWith(provider + ':'));
-    }
-  }
+  const match = OVERLAY_MODELS.find(m => m.value === targetVal)
+    || OVERLAY_MODELS.find(m => m.value.startsWith(provider + ':'));
   if (match) setOverlayModel(match.value);
 });
 
