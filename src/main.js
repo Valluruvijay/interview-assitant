@@ -225,6 +225,7 @@ function createOverlay() {
     transparent: true,
     alwaysOnTop: true,
     skipTaskbar: true,
+    type: 'toolbar',
     resizable: true,
     // focusable:false => the overlay never becomes the OS foreground window.
     // Clicking it still works (mouse messages are delivered), but the other
@@ -255,7 +256,12 @@ function createOverlay() {
   });
 
   // Release the temporary focus we took for typing as soon as focus leaves.
-  overlayWin.on('blur', () => setOverlayFocusable(false));
+  overlayWin.on('blur', () => {
+    setOverlayFocusable(false);
+    if (overlayWin && !overlayWin.isDestroyed()) {
+      overlayWin.setSkipTaskbar(true);
+    }
+  });
 
   // The window is created with show:false, so it is already hidden here.
   // Do NOT call hide() on it: a hide -> show cycle leaves a non-activating
@@ -289,6 +295,7 @@ function setOverlayFocusable(focusable) {
   overlayFocusable = focusable;
   try {
     overlayWin.setFocusable(focusable);
+    overlayWin.setSkipTaskbar(true);
   } catch (e) {
     console.warn('[Focus] setFocusable failed:', e.message);
   }
@@ -314,6 +321,7 @@ ipcMain.handle('get-anti-tab-shield-state', () => antiTabSwitchShield);
 
 function showOverlay() {
   if (!overlayWin || overlayWin.isDestroyed()) return;
+  overlayWin.setSkipTaskbar(true);
   overlayWin.setIgnoreMouseEvents(false);
   overlayWin.setOpacity(currentOpacity);
   overlayWin.showInactive();
@@ -424,9 +432,9 @@ function toggleControlPanel() {
     if (isCurrentlyOnScreen) {
       // Hide Control Panel & REVERT focus to Overlay Window
       controlWin.savedBounds = bounds;
-      controlWin.setBounds({ x: -10000, y: -10000, width: bounds.width, height: bounds.height });
-      controlWin.hide();
       controlWin.setSkipTaskbar(true);
+      controlWin.hide();
+      controlWin.setBounds({ x: -10000, y: -10000, width: bounds.width, height: bounds.height });
 
       if (overlayWin && !overlayWin.isDestroyed()) {
         showOverlay();
@@ -438,9 +446,8 @@ function toggleControlPanel() {
         ? controlWin.savedBounds
         : { width: 440, height: 720, x: 80, y: 80 };
       controlWin.setBounds(targetBounds);
-      controlWin.setSkipTaskbar(false);
-      // showInactive: appear without pulling focus away from the other app
       controlWin.showInactive();
+      controlWin.setSkipTaskbar(false);
     }
   } else {
     createControl();
@@ -663,18 +670,22 @@ ipcMain.on('toggle-overlay', () => {
 });
 
 ipcMain.on('set-control-taskbar', (_, skip) => {
-  if (controlWin) controlWin.setSkipTaskbar(skip);
+  if (controlWin && !controlWin.isDestroyed()) {
+    controlWin.setSkipTaskbar(skip);
+    if (skip) controlWin.hide();
+  }
 });
 
 ipcMain.on('hide-control-window', () => {
-  if (controlWin) {
+  if (controlWin && !controlWin.isDestroyed()) {
     const bounds = controlWin.getBounds();
     // Only save bounds if not already off-screen
     if (bounds.x > -5000) {
       controlWin.savedBounds = bounds;
     }
-    controlWin.setBounds({ x: -10000, y: -10000, width: bounds.width, height: bounds.height });
     controlWin.setSkipTaskbar(true);
+    controlWin.hide();
+    controlWin.setBounds({ x: -10000, y: -10000, width: bounds.width, height: bounds.height });
   }
 });
 let preCollapseBounds = null;
@@ -695,7 +706,12 @@ ipcMain.on('set-ignore-mouse', (event, ignore) => {
   // Disabled to prevent window freezing
 });
 ipcMain.on('show-overlay', () => {
-  if (overlayWin) {
+  if (controlWin && !controlWin.isDestroyed()) {
+    controlWin.setSkipTaskbar(true);
+    controlWin.hide();
+  }
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    overlayWin.setSkipTaskbar(true);
     setOverlayVisible(true);
   }
 });
@@ -707,15 +723,13 @@ ipcMain.on('hide-overlay', () => {
 });
 
 ipcMain.on('show-control-window', () => {
-  if (controlWin) {
+  if (controlWin && !controlWin.isDestroyed()) {
     const targetBounds = (controlWin.savedBounds && controlWin.savedBounds.x > -5000)
       ? controlWin.savedBounds
       : { width: 440, height: 720, x: 80, y: 80 };
     controlWin.setBounds(targetBounds);
-    controlWin.setSkipTaskbar(false);
-    // Appears without stealing foreground focus; a deliberate click by the
-    // user is what activates it.
     controlWin.showInactive();
+    controlWin.setSkipTaskbar(false);
   }
 });
 
@@ -728,15 +742,15 @@ ipcMain.on('move-overlay-to-display', (_, displayIndex) => {
 });
 
 ipcMain.on('end-session-from-overlay', () => {
-  if (overlayWin) {
+  if (overlayWin && !overlayWin.isDestroyed()) {
     setOverlayVisible(false);
   }
-  if (controlWin) {
+  if (controlWin && !controlWin.isDestroyed()) {
     if (controlWin.savedBounds) {
       controlWin.setBounds(controlWin.savedBounds);
     }
-    controlWin.setSkipTaskbar(false);
     controlWin.showInactive();
+    controlWin.setSkipTaskbar(false);
     safeSend(controlWin, 'end-session-remote');
   }
 });
