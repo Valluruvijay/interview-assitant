@@ -293,7 +293,7 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
       <div class="lbl">AI Interviewer Model</div>
       <div style="display:flex; gap:10px;">
         <select id="aiProviderSelect" style="flex:1;" onchange="handleAiProviderChange()">
-          <option value="zai">Z.AI</option>
+          <option value="cerebras">Cerebras Cloud</option>
           <option value="gemini">Google Gemini</option>
           <option value="gemini2">Google Gemini 2</option>
           <option value="groq">Groq</option>
@@ -650,11 +650,11 @@ let usageCount = 0;
 let currentSessionQA = [];
 let sessionStart = null;
 let testMode = false;
-let currentProvider = 'chatgpt'; // 'claude', 'grok', 'deepgram', or 'zai'
+let currentProvider = 'chatgpt'; // 'cerebras', 'chatgpt', 'gemini', 'groq', 'deepseek'
 let resumeFiles = [];
 let referenceFiles = [];
 let envConfig = {};
-let currentZaiModel = 'glm-5.3-flash';
+let currentCerebrasModel = 'qwen-3.8-27b';
 let chatgptPromptApproved = false;
 let chatgptPromptOverride = '';
 let chatgptPromptResolver = null;
@@ -675,12 +675,12 @@ const PROVIDERS = {
     apiBase: 'https://api.deepgram.com',
     model: 'nova-3',
   },
-  zai: {
-    label: 'Z.AI API Key',
-    placeholder: 'Your Z.AI API key...',
-    hint: 'GLM-5.3-Flash and GLM-4.7-Flash are FREE. Get key at z.ai · Stored locally.',
-    apiBase: 'https://api.z.ai/v1',
-    model: 'glm-5.3-flash',
+  cerebras: {
+    label: 'Cerebras API Key',
+    placeholder: 'csk-...',
+    hint: 'Get key at cloud.cerebras.ai · Stored locally only.',
+    apiBase: 'https://api.cerebras.ai/v1',
+    model: 'qwen-3.8-27b',
   },
   groq: {
     label: 'Groq API Key',
@@ -956,7 +956,7 @@ function handleAiProviderChange() {
   const provider = $('aiProviderSelect').value;
   chatgptPromptApproved = false;
   
-  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'zai'].includes(provider)) {
+  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'cerebras'].includes(provider)) {
     $('editChatgptPromptBtn').style.display = 'block';
   } else {
     $('editChatgptPromptBtn').style.display = 'none';
@@ -1132,13 +1132,12 @@ function populateAiModels(provider) {
   modelSelect.innerHTML = '';
   
   let models = [];
-  if (provider === 'zai') {
+  if (provider === 'cerebras') {
     models = [
-      { id: 'glm-5.3-flash', label: 'GLM-5.3-Flash (Free)' },
-      { id: 'glm-4.7-flash', label: 'GLM-4.7-Flash (Free)' }
+      { id: 'qwen-3.8-27b', label: 'Qwen 3.8 27B (Ultra-Fast)' }
     ];
-    if (!models.map(m => m.id).includes(PROVIDERS.zai.model)) {
-      PROVIDERS.zai.model = 'glm-5.3-flash';
+    if (!models.map(m => m.id).includes(PROVIDERS.cerebras.model)) {
+      PROVIDERS.cerebras.model = 'qwen-3.8-27b';
     }
   } else if (provider === 'gemini') {
     models = [
@@ -1205,12 +1204,7 @@ function saveAiModel() {
   const selectedModel = $('aiModelSelect').value;
   PROVIDERS[currentProvider].model = selectedModel;
   
-  if (currentProvider === 'zai') {
-    currentZaiModel = selectedModel;
-    saveS({ zaiModel: selectedModel });
-  } else {
-    saveS({ [currentProvider + 'Model']: selectedModel });
-  }
+  saveS({ [currentProvider + 'Model']: selectedModel });
   setStatus('Model updated to ' + selectedModel);
   updateModelTuningUI();
 }
@@ -1305,7 +1299,7 @@ async function mockAskQuestion(question) {
     speakingStyle = s.setupStyle;
   }
 
-  if (envConfig.zAiApiBase) PROVIDERS.zai.apiBase = envConfig.zAiApiBase;
+  if (envConfig.cerebrasApiBase) PROVIDERS.cerebras.apiBase = envConfig.cerebrasApiBase;
   if (s.deepgramApiKey && $('deepgramApiKey')) $('deepgramApiKey').value = s.deepgramApiKey;
   if (s.geminiSttApiKey && $('geminiSttApiKey')) $('geminiSttApiKey').value = s.geminiSttApiKey;
   if (s.sttEngine) {
@@ -1315,7 +1309,7 @@ async function mockAskQuestion(question) {
   handleSttEngineChange();
   window.savedMicDeviceId = s.selectedMicDeviceId || '';
 
-  if (s.zaiModel) PROVIDERS.zai.model = s.zaiModel;
+  if (s.cerebrasModel) PROVIDERS.cerebras.model = s.cerebrasModel;
   if (s.grokModel) PROVIDERS.grok.model = s.grokModel;
   if (s.geminiModel) PROVIDERS.gemini.model = s.geminiModel;
   if (s.gemini2Model) PROVIDERS.gemini2.model = s.gemini2Model;
@@ -1363,15 +1357,18 @@ async function mockAskQuestion(question) {
   updateAutoSendHint();
   ipcRenderer.send('auto-send-state', window.autoSendEnabled !== false);
 
-  if (s.provider && s.provider !== 'deepgram' && s.provider !== 'claude' && s.provider !== 'tokenharbor') {
+  if (s.provider && s.provider !== 'deepgram' && s.provider !== 'claude' && s.provider !== 'tokenharbor' && s.provider !== 'zai') {
     currentProvider = s.provider;
     $('aiProviderSelect').value = s.provider;
+  } else if (s.provider === 'zai') {
+    currentProvider = 'cerebras';
+    $('aiProviderSelect').value = 'cerebras';
   } else {
     currentProvider = 'chatgpt';
     $('aiProviderSelect').value = 'chatgpt';
   }
 
-  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'zai'].includes(currentProvider)) {
+  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'cerebras'].includes(currentProvider)) {
     $('editChatgptPromptBtn').style.display = 'block';
   }
 
@@ -1400,8 +1397,8 @@ async function mockAskQuestion(question) {
   }
   $('apiKey').value = savedKey;
 
-  if (currentProvider === 'zai' && !$('apiKey').value && envConfig.zaiApiKey) {
-    $('apiKey').value = envConfig.zaiApiKey;
+  if (currentProvider === 'cerebras' && !$('apiKey').value && envConfig.cerebrasApiKey) {
+    $('apiKey').value = envConfig.cerebrasApiKey;
   }
 
   if (s.opacity) { $('opacitySlider').value = Math.round(s.opacity * 100); $('opacityVal').textContent = Math.round(s.opacity * 100) + '%'; }
@@ -3353,7 +3350,7 @@ Main objective: help me communicate my actual Salesforce knowledge confidently, 
 let promptPreviewResolve = null;
 
 function showChatGPTPromptPreview(force = false) {
-  if (!['chatgpt', 'gemini', 'gemini2', 'groq', 'deepseek', 'zai'].includes(currentProvider)) return Promise.resolve(true);
+  if (!['chatgpt', 'gemini', 'gemini2', 'groq', 'deepseek', 'cerebras'].includes(currentProvider)) return Promise.resolve(true);
   const modal = $('chatgptPromptPreview');
   const textArea = $('chatgptPromptText');
   const meta = $('chatgptPromptMeta');
@@ -3369,6 +3366,7 @@ function showChatGPTPromptPreview(force = false) {
     else if (currentProvider === 'gemini2') title.textContent = 'Gemini 2 Interview Prompt Preview';
     else if (currentProvider === 'groq') title.textContent = 'Groq Interview Prompt Preview';
     else if (currentProvider === 'deepseek') title.textContent = 'DeepSeek Interview Prompt Preview';
+    else if (currentProvider === 'cerebras') title.textContent = 'Cerebras Interview Prompt Preview';
     else title.textContent = 'ChatGPT Interview Prompt Preview';
   }
 
@@ -3379,6 +3377,7 @@ function showChatGPTPromptPreview(force = false) {
   else if (currentProvider === 'gemini2') pName = 'Gemini 2';
   if (currentProvider === 'groq') pName = 'Groq';
   if (currentProvider === 'deepseek') pName = 'DeepSeek';
+  if (currentProvider === 'cerebras') pName = 'Cerebras';
   setStatus(`Editing ${pName} base instructions.`);
 
   return new Promise(resolve => {
@@ -3408,6 +3407,7 @@ async function approveChatGPTPromptPreview() {
   else if (currentProvider === 'gemini2') pName = 'Gemini 2';
   if (currentProvider === 'groq') pName = 'Groq';
   if (currentProvider === 'deepseek') pName = 'DeepSeek';
+  if (currentProvider === 'cerebras') pName = 'Cerebras';
   if (meta) meta.textContent = `Sending to ${pName} for acknowledgement...`;
   setStatus('Sending prompt to model...');
 
@@ -3528,9 +3528,9 @@ async function askQuestion(qOverride, imageBase64 = null) {
     }
   }
 
-  // Fallback check for Z.AI
-  if (!effectiveKey && effectiveProvider === 'zai' && (envConfig.zaiApiKeyAvailable || envConfig.zAiApiKeyAvailable)) {
-    effectiveKey = 'env_placeholder';
+  // Fallback check for Cerebras
+  if (!effectiveKey && effectiveProvider === 'cerebras' && envConfig.cerebrasApiKey) {
+    effectiveKey = envConfig.cerebrasApiKey;
   }
 
   // ── Screen images: vision models read the image; text-only models get an OCR transcript ──
@@ -3659,7 +3659,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
 
     if (imageBase64) {
       const images = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
-      if (['zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
+      if (['cerebras', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
         const contentParts = [
           { type: 'text', text: images.length > 1 
               ? `These ${images.length} screenshots are sequential parts of one question. Read all parts together, then answer what is asked. It may be a multiple-choice question, a coding problem, a diagram, or a form. If it is multiple choice, state the correct option with a one-line reason.`
@@ -3707,7 +3707,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
     let responsesModeActive = false;
     for (let i = 0; i < modelsToTry.length; i++) {
       const currentModel = modelsToTry[i];
-      const isOpenAICompatible = ['zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider);
+      const isOpenAICompatible = ['cerebras', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider);
       const useResponsesApi = effectiveProvider === 'chatgpt' && window.chatgptResponsesEnabled !== false;
 
       if (isOpenAICompatible) {
@@ -3848,11 +3848,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
           requestBody.temperature = userTemp;
         }
 
-        if (effectiveProvider === 'zai' && currentModel === 'glm-4.7') {
-          requestBody.thinking = { type: 'enabled' };
-          requestBody.temperature = 1.0;
-          requestBody.max_tokens = 4096;
-        }
+
 
         if (useResponsesApi) {
           // Re-shape the Chat Completions payload into the Responses API shape
@@ -3983,7 +3979,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
             } else if (p.type === 'response.failed' || p.type === 'error') {
               streamError = p.response?.error?.message || p.error?.message || p.message || 'Responses API stream error';
             }
-          } else if (['grok', 'zai', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
+          } else if (['grok', 'cerebras', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
             chunk = p.choices?.[0]?.delta?.content || '';
           } else {
             if (p.type === 'content_block_delta' && p.delta?.text) {

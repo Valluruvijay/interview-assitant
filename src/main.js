@@ -815,10 +815,9 @@ ipcMain.handle('save-settings', (_, s) => { saveSettings(s); return true; });
 ipcMain.handle('get-env-config', () => {
   const settings = loadSettings();
   return {
-    zaiApiKeyAvailable: Boolean(process.env.ZAI_API_KEY),
-    zAiApiKeyAvailable: Boolean(process.env.Z_AI_API_KEY),
-    zaiApiKey: process.env.ZAI_API_KEY || process.env.Z_AI_API_KEY || '',
-    zAiApiBase: process.env.ZAI_API_BASE || process.env.Z_AI_API_BASE || 'https://api.z.ai/api/paas/v4',
+    cerebrasApiKeyAvailable: Boolean(process.env.CEREBRAS_API_KEY),
+    cerebrasApiKey: process.env.CEREBRAS_API_KEY || '',
+    cerebrasApiBase: process.env.CEREBRAS_API_BASE || 'https://api.cerebras.ai/v1',
     savedApiKeys: settings.apiKeys || {}
   };
 });
