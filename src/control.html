@@ -2444,8 +2444,9 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
             }
             const bytes = new Uint8Array(pcm16.buffer);
             let binary = '';
-            for (let i = 0; i < bytes.byteLength; i++) {
-              binary += String.fromCharCode(bytes[i]);
+            const chunkLen = 8192;
+            for (let i = 0; i < bytes.length; i += chunkLen) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkLen));
             }
             geminiSysSocket.send(JSON.stringify({
               realtimeInput: {
@@ -2529,7 +2530,7 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
         if (!geminiSysSetupDone) {
           setStatus(`⚠ Gemini Live closed before setup (code ${e.code || 'none'}) — check the model ID and Google key.`);
         }
-        if (isListening && (isPracticeMode ? micStream : systemStream)) {
+        if (isListening && (isPracticeMode ? micStream : (audioOnlyStream || sysStream))) {
           setTimeout(connectGeminiSysSocket, 1500);
         }
       };
@@ -2581,8 +2582,9 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
             }
             const bytes = new Uint8Array(pcm16.buffer);
             let binary = '';
-            for (let i = 0; i < bytes.byteLength; i++) {
-              binary += String.fromCharCode(bytes[i]);
+            const chunkLen = 8192;
+            for (let i = 0; i < bytes.length; i += chunkLen) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkLen));
             }
             geminiSocket.send(JSON.stringify({
               realtimeInput: {
@@ -4064,9 +4066,12 @@ async function askQuestion(qOverride, imageBase64 = null) {
 }
 
 // ── SESSION ───────────────────────────────────────────────
+let currentSessionId = null;
+
 function autoSaveSession() {
   if (!currentSessionQA.length) return;
-  ipcRenderer.send('save-session', { date: sessionStart, role: currentRole, company: '', qa: currentSessionQA });
+  if (!currentSessionId) currentSessionId = Date.now();
+  ipcRenderer.send('save-session', { id: currentSessionId, date: sessionStart || new Date().toISOString(), role: currentRole, company: '', qa: currentSessionQA });
 }
 
 function clearAll() {
@@ -4077,6 +4082,7 @@ function clearAll() {
   finalTranscript = '';
   window.currentInterviewerText = '';
   sessionStart = null;
+  currentSessionId = null;
   currentSessionQA = [];
   setStatus('Cleared');
 }

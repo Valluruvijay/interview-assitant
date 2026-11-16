@@ -803,9 +803,15 @@ ipcMain.on('open-screenshots-folder', () => {
 });
 
 ipcMain.on('save-session', (_, sessionData) => {
+  if (!sessionData) return;
   const sessions = loadSessions();
-  sessions.unshift({ ...sessionData, id: Date.now(), date: new Date().toISOString() });
-  if (sessions.length > 50) sessions.pop();
+  const existingIdx = sessionData.id ? sessions.findIndex(s => s.id === sessionData.id) : -1;
+  if (existingIdx >= 0) {
+    sessions[existingIdx] = { ...sessions[existingIdx], ...sessionData };
+  } else {
+    sessions.unshift({ ...sessionData, id: sessionData.id || Date.now(), date: sessionData.date || new Date().toISOString() });
+    if (sessions.length > 50) sessions.pop();
+  }
   saveSessions(sessions);
 });
 
