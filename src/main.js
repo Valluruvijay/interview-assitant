@@ -353,7 +353,7 @@ function createControl() {
     minHeight: 600,
     frame: false,
     transparent: false,
-    backgroundColor: '#0b0f17',
+    backgroundColor: '#0d1117',
     skipTaskbar: false,
     resizable: true,
     // Created hidden and shown without activation: launching the app must not
@@ -392,8 +392,10 @@ function createControl() {
 
   controlWin.on('closed', () => {
     controlWin = null;
-    if (overlayWin && !overlayWin.isDestroyed()) overlayWin.close();
-    app.quit();
+    if (overlayWin && !overlayWin.isDestroyed()) {
+      try { overlayWin.destroy(); } catch (_) {}
+    }
+    app.exit(0);
   });
 }
 
@@ -404,7 +406,7 @@ app.setName('AMD Audio Service');
 // which reads as "the app is not responding".
 const isPrimaryInstance = app.requestSingleInstanceLock();
 if (!isPrimaryInstance) {
-  app.quit();
+  app.exit(0);
 } else {
   app.on('second-instance', () => {
     if (controlWin && !controlWin.isDestroyed()) {
@@ -412,6 +414,8 @@ if (!isPrimaryInstance) {
       controlWin.setSkipTaskbar(false);
       controlWin.show();
       controlWin.focus();
+    } else {
+      createControl();
     }
   });
 
@@ -946,7 +950,13 @@ ipcMain.on('minimize-control', () => {
   }
 });
 ipcMain.on('close-app', () => {
-  app.quit();
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    try { overlayWin.destroy(); } catch (_) {}
+  }
+  if (controlWin && !controlWin.isDestroyed()) {
+    try { controlWin.destroy(); } catch (_) {}
+  }
+  app.exit(0);
 });
 ipcMain.on('reasoning-status', (_, data) => safeSend(overlayWin, 'reasoning-status', data));
 ipcMain.on('overlay-theme', (_, theme) => safeSend(overlayWin, 'set-theme', theme));

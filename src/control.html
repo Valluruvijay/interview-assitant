@@ -165,8 +165,12 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
     <span class="tb-ver">v2.0</span>
   </div>
   <div class="tb-btns">
-    <button type="button" class="tb-btn" onclick="minimizeControl()" title="Minimize">─</button>
-    <button type="button" class="tb-btn close" onclick="closeAppFresh()" title="Close">✕</button>
+    <button type="button" class="tb-btn" onclick="minimizeControl()" title="Minimize" aria-label="Minimize">
+      <svg width="10" height="2" viewBox="0 0 10 2" fill="currentColor"><rect width="10" height="2" rx="1"/></svg>
+    </button>
+    <button type="button" class="tb-btn close" onclick="closeAppFresh()" title="Close" aria-label="Close">
+      <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 1l8 8M9 1l-8 8"/></svg>
+    </button>
   </div>
 </div>
 <div class="tabs">
@@ -840,9 +844,6 @@ function beginInterviewListening() {
     toggleMic();
     setTimeout(() => ipcRenderer.send('mic-state-changed', true), 500);
   }
-  // Hide tabs and titlebar
-  document.querySelector('.tabs').style.display = 'none';
-  document.querySelector('.titlebar').style.display = 'none';
   ipcRenderer.send('set-control-taskbar', true);
   setStatus('✓ Interview started — listening for questions');
   // Hide the app window
@@ -885,8 +886,6 @@ function prepareInterview() {
     const shouldStart = await showChatGPTPromptPreview();
     if (!shouldStart) return;
 
-    document.querySelector('.tabs').style.display = 'none';
-    document.querySelector('.titlebar').style.display = 'none'; // Hide titlebar as requested
     ipcRenderer.send('set-control-taskbar', true);
     switchTab('live', document.querySelector('.tabs .tab:nth-child(1)'));
     setStatus('✓ AI Interviewer prepared for ' + currentRole);
@@ -1435,9 +1434,13 @@ function saveApiKey() {
   if (currentProvider === 'gemini') {
     envConfig.savedApiKeys.gemini2 = key;
     ipcRenderer.invoke('save-api-key', { provider: 'gemini2', key });
+    if ($('geminiSttApiKey')) $('geminiSttApiKey').value = key;
+    saveS({ geminiSttApiKey: key });
   } else if (currentProvider === 'gemini2') {
     envConfig.savedApiKeys.gemini = key;
     ipcRenderer.invoke('save-api-key', { provider: 'gemini', key });
+    if ($('geminiSttApiKey')) $('geminiSttApiKey').value = key;
+    saveS({ geminiSttApiKey: key });
   }
   saveS({ apiKey: key, provider: currentProvider });
 }
@@ -3353,23 +3356,28 @@ Main objective: help me communicate my actual Salesforce knowledge confidently, 
 let promptPreviewResolve = null;
 
 function showChatGPTPromptPreview(force = false) {
-  if (!['chatgpt', 'gemini', 'gemini2', 'groq', 'deepseek', 'cerebras'].includes(currentProvider)) return Promise.resolve(true);
   const modal = $('chatgptPromptPreview');
   const textArea = $('chatgptPromptText');
   const meta = $('chatgptPromptMeta');
   if (!modal || !textArea) return Promise.resolve(true);
 
-  const prompt = buildChatGPTSystemPrompt('', false);
-  textArea.value = prompt;
+  try {
+    const prompt = buildChatGPTSystemPrompt('', false);
+    textArea.value = prompt;
+  } catch (err) {
+    console.warn('[Prompt Preview] buildChatGPTSystemPrompt error:', err);
+  }
+
   if (meta) meta.textContent = `${Array.from(selectedTechs).length || 0} tools selected`;
   
+  const pLower = String(currentProvider || 'chatgpt').toLowerCase().trim();
   let pName = 'ChatGPT';
-  if (currentProvider === 'gemini') pName = 'Google Gemini';
-  else if (currentProvider === 'gemini2') pName = 'Google Gemini 2';
-  else if (currentProvider === 'groq') pName = 'Groq';
-  else if (currentProvider === 'deepseek') pName = 'DeepSeek';
-  else if (currentProvider === 'cerebras') pName = 'Cerebras Cloud';
-  else pName = 'ChatGPT';
+  if (pLower === 'gemini') pName = 'Google Gemini';
+  else if (pLower === 'gemini2') pName = 'Google Gemini 2';
+  else if (pLower === 'groq') pName = 'Groq';
+  else if (pLower === 'deepseek') pName = 'DeepSeek';
+  else if (pLower === 'cerebras') pName = 'Cerebras Cloud';
+  else pName = currentProvider ? currentProvider.toUpperCase() : 'AI Assistant';
 
   const title = modal.querySelector('.prompt-title');
   if (title) title.textContent = `${pName} Interview Prompt Preview`;
@@ -3378,6 +3386,7 @@ function showChatGPTPromptPreview(force = false) {
   if (btn) btn.textContent = `Approve & Start (${pName})`;
 
   modal.style.display = 'flex';
+  modal.style.zIndex = '10000';
   setStatus(`Reviewing ${pName} interview prompt…`);
 
   return new Promise(resolve => {
@@ -3899,7 +3908,8 @@ async function askQuestion(qOverride, imageBase64 = null) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
-    let inThinkTag = false;
+    let rawAccumulatedAnswer = '';
+    let cleanAnswerStreamed = 0;
     let cachedTokensFound = 0;
     let streamError = null;
 
@@ -3930,25 +3940,13 @@ async function askQuestion(qOverride, imageBase64 = null) {
             if (cached > 0) cachedTokensFound = cached;
           }
 
-          // Live indicator if reasoning model is streaming reasoning tokens
-          const reasoningContent = p.choices?.[0]?.delta?.reasoning_content || p.choices?.[0]?.delta?.reasoning;
-          if (reasoningContent && !fullAnswer) {
-            isCurrentlyReasoning = true;
-            setStatus(`🤔 ${effectiveProvider.toUpperCase()} is reasoning…`);
-            ipcRenderer.send('reasoning-status', { isReasoning: true });
-            const liveAns = $('ctrlLiveAnswer');
-            if (liveAns && !fullAnswer) {
-              liveAns.innerHTML = `<span style="color:#f59e0b;font-weight:600;">🤔 Reasoning in progress…</span>`;
-            }
-          }
-
           let chunk = '';
           if (responsesModeActive) {
             // OpenAI Responses API event stream
             if (p.type === 'response.output_text.delta') {
               chunk = p.delta || '';
             } else if (p.type === 'response.reasoning_summary_text.delta') {
-              if (!fullAnswer) {
+              if (!cleanAnswerStreamed) {
                 isCurrentlyReasoning = true;
                 setStatus('🤔 Reasoning in progress…');
                 ipcRenderer.send('reasoning-status', { isReasoning: true });
@@ -3956,43 +3954,59 @@ async function askQuestion(qOverride, imageBase64 = null) {
             } else if (p.type === 'response.failed' || p.type === 'error') {
               streamError = p.response?.error?.message || p.error?.message || p.message || 'Responses API stream error';
             }
-          } else if (['grok', 'cerebras', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
-            chunk = p.choices?.[0]?.delta?.content || '';
           } else {
-            if (p.type === 'content_block_delta' && p.delta?.text) {
-              chunk = p.delta.text;
+            chunk = p.choices?.[0]?.delta?.content || (typeof p.choices?.[0]?.text === 'string' ? p.choices[0].text : '');
+          }
+
+          // Live indicator if reasoning model is streaming reasoning tokens (Cerebras delta.reasoning, DeepSeek delta.reasoning_content)
+          const reasoningDelta = p.choices?.[0]?.delta?.reasoning_content || p.choices?.[0]?.delta?.reasoning;
+          if (reasoningDelta && !cleanAnswerStreamed) {
+            isCurrentlyReasoning = true;
+            setStatus(`🤔 ${effectiveProvider.toUpperCase()} is reasoning…`);
+            ipcRenderer.send('reasoning-status', { isReasoning: true });
+            const liveAns = $('ctrlLiveAnswer');
+            if (liveAns) {
+              liveAns.innerHTML = `<span style="color:#f59e0b;font-weight:600;">🤔 Reasoning in progress…</span>`;
             }
           }
+
           if (chunk) {
-            if (isCurrentlyReasoning) {
-              isCurrentlyReasoning = false;
-              ipcRenderer.send('reasoning-status', { isReasoning: false });
-            }
-            fullAnswer += chunk;
-            let displayChunk = chunk;
-            
-            if (inThinkTag) {
-              if (displayChunk.includes('</think>')) {
-                inThinkTag = false;
-                displayChunk = displayChunk.split('</think>')[1] || '';
-              } else {
-                displayChunk = '';
+            rawAccumulatedAnswer += chunk;
+
+            // Determine visible answer (stripping <think>...</think> if present)
+            let currentVisibleAnswer = '';
+            if (!rawAccumulatedAnswer.includes('<think>')) {
+              currentVisibleAnswer = rawAccumulatedAnswer;
+            } else if (rawAccumulatedAnswer.includes('</think>')) {
+              currentVisibleAnswer = rawAccumulatedAnswer.split('</think>')[1] || '';
+              if (isCurrentlyReasoning) {
+                isCurrentlyReasoning = false;
+                ipcRenderer.send('reasoning-status', { isReasoning: false });
               }
-            } else if (displayChunk.includes('<think>')) {
-              const parts = displayChunk.split('<think>');
-              if (parts[1] && parts[1].includes('</think>')) {
-                displayChunk = parts[0] + (parts[1].split('</think>')[1] || '');
-              } else {
-                inThinkTag = true;
-                displayChunk = parts[0] || '';
+            } else {
+              // Still inside <think>...</think>
+              if (!isCurrentlyReasoning) {
+                isCurrentlyReasoning = true;
+                setStatus(`🤔 ${effectiveProvider.toUpperCase()} is reasoning…`);
+                ipcRenderer.send('reasoning-status', { isReasoning: true });
+                const liveAns = $('ctrlLiveAnswer');
+                if (liveAns) {
+                  liveAns.innerHTML = `<span style="color:#f59e0b;font-weight:600;">🤔 Reasoning in progress…</span>`;
+                }
               }
             }
 
-            if (displayChunk) {
-              ipcRenderer.send('answer-chunk', displayChunk);
+            if (currentVisibleAnswer.length > cleanAnswerStreamed) {
+              if (isCurrentlyReasoning) {
+                isCurrentlyReasoning = false;
+                ipcRenderer.send('reasoning-status', { isReasoning: false });
+              }
+              const newDelta = currentVisibleAnswer.slice(cleanAnswerStreamed);
+              cleanAnswerStreamed = currentVisibleAnswer.length;
+              ipcRenderer.send('answer-chunk', newDelta);
               const liveAns = $('ctrlLiveAnswer');
               if (liveAns) {
-                liveAns.textContent = fullAnswer.length > 300 ? '…' + fullAnswer.slice(-300) : fullAnswer;
+                liveAns.textContent = currentVisibleAnswer.length > 300 ? '…' + currentVisibleAnswer.slice(-300) : currentVisibleAnswer;
               }
             }
           }
@@ -4002,7 +4016,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
     
     if (streamError) throw new Error(streamError);
 
-    fullAnswer = fullAnswer.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    fullAnswer = (cleanAnswerStreamed > 0 ? rawAccumulatedAnswer.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() : rawAccumulatedAnswer.trim());
 
     clearInterval(controlTimerInterval);
     ipcRenderer.send('answer-done');
