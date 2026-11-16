@@ -19,7 +19,13 @@
   --a-border: rgba(255,255,255,0.08);
   --fs: 13px;
 }
-body { background:transparent; font-family:'Segoe UI',sans-serif; overflow:hidden; }
+html, body {
+  background: transparent !important;
+  background-color: transparent !important;
+  color-scheme: dark;
+  font-family: 'Segoe UI', sans-serif;
+  overflow: hidden;
+}
 .shell {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1244,6 +1250,7 @@ ipcRenderer.on('show-question', (_, qData) => {
   const qStart = (typeof qData === 'object' && qData && qData.startTime) ? qData.startTime : Date.now();
   currentQuestionStartTime = qStart;
   currentTTFT = null;
+  isReasoningActive = false;
 
   currentQ = q; currentA = '';
   const idleEl = $('idle');
@@ -1319,7 +1326,7 @@ ipcRenderer.on('show-question', (_, qData) => {
     const stEl = $('st');
     if (stEl) {
       if (!currentTTFT) {
-        stEl.textContent = `Downloading… ${elapsed}s`;
+        stEl.textContent = isReasoningActive ? `🤔 Reasoning… ${elapsed}s` : `Downloading… ${elapsed}s`;
       } else {
         stEl.textContent = `Streaming… ${elapsed}s (⚡ ${currentTTFT}s)`;
       }
@@ -1394,9 +1401,34 @@ ipcRenderer.on('show-question', (_, qData) => {
   }
 });
 
+let isReasoningActive = false;
+
+ipcRenderer.on('reasoning-status', (_, data) => {
+  isReasoningActive = !!(data && data.isReasoning);
+  const stEl = $('st');
+  const orb = $('orb');
+  if (stEl && !currentTTFT) {
+    if (isReasoningActive) {
+      stEl.textContent = '🤔 Reasoning…';
+      if (orb) orb.style.background = '#818cf8';
+    } else {
+      stEl.textContent = 'Downloading…';
+      if (orb) orb.style.background = '#FAC775';
+    }
+  }
+  if (activeATimerBadge && !currentTTFT && isReasoningActive) {
+    activeATimerBadge.innerHTML = '🤔 Thinking…';
+  }
+});
+
 let pendingChunkUpdate = false;
 
 ipcRenderer.on('answer-chunk', (_, chunk) => {
+  if (isReasoningActive) {
+    isReasoningActive = false;
+    const orb = $('orb');
+    if (orb) orb.style.background = '#FAC775';
+  }
   if (!currentAnswerContent) return;
   currentA += chunk;
   

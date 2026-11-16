@@ -939,5 +939,6 @@ ipcMain.on('minimize-control', () => {
 ipcMain.on('close-app', () => {
   app.quit();
 });
+ipcMain.on('reasoning-status', (_, data) => safeSend(overlayWin, 'reasoning-status', data));
 ipcMain.on('overlay-theme', (_, theme) => safeSend(overlayWin, 'set-theme', theme));
 ipcMain.on('overlay-fontsize', (_, size) => safeSend(overlayWin, 'set-fontsize', size));

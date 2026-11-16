@@ -11,7 +11,7 @@
   --text:#e6edf3;--text2:#8b949e;--text3:#484f58;
   --danger:#f09595;--warning:#EF9F27;
 }
-body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+html, body{font-family:'Segoe UI',sans-serif;background:var(--bg) !important;background-color:#0d1117 !important;color-scheme:dark;color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
 .titlebar{display:flex;align-items:center;padding:8px 14px;background:var(--bg2);border-bottom:1px solid var(--border);-webkit-app-region:drag;flex-shrink:0;}
 .tb-logo{display:flex;align-items:center;gap:7px;margin-right:auto;}
 .tb-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);}
@@ -854,10 +854,7 @@ function beginInterviewListening() {
 
 async function startFullInterview() {
   refreshSetupStateFromInputs();
-  const shouldStart = await showChatGPTPromptPreview();
-  if (shouldStart) {
-    beginInterviewListening();
-  }
+  beginInterviewListening();
 }
 
 function prepareInterview() {
@@ -878,12 +875,8 @@ function prepareInterview() {
   // Show Loading Overlay
   $('setupOverlay').style.display = 'flex';
   
-  // Simulate processing time for heavy background prompt building / caching
-    setTimeout(async () => {
+  setTimeout(async () => {
     $('setupOverlay').style.display = 'none';
-
-    const shouldStart = await showChatGPTPromptPreview();
-    if (!shouldStart) return;
 
     document.querySelector('.tabs').style.display = 'none';
     document.querySelector('.titlebar').style.display = 'none'; // Hide titlebar as requested
@@ -897,7 +890,7 @@ function prepareInterview() {
     }
     ipcRenderer.send('hide-control-window');
     ipcRenderer.send('show-overlay');
-  }, 2000);
+  }, 1000);
 }
 
 function endInterview() {
@@ -3439,9 +3432,9 @@ async function approveChatGPTPromptPreview() {
 
     if (!ackViaResponses) {
       if (currentProvider === 'chatgpt') {
-        reqBody.max_completion_tokens = 50;
+        reqBody.max_completion_tokens = 500;
       } else {
-        reqBody.max_tokens = 50;
+        reqBody.max_tokens = 500;
       }
     }
 
@@ -3455,7 +3448,7 @@ async function approveChatGPTPromptPreview() {
       const data = await res.json();
       const reply = ackViaResponses
         ? (data.output_text || (data.output || []).flatMap(o => o.content || []).map(c => c.text || '').join(''))
-        : data.choices[0].message.content;
+        : (data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning || 'Prompt received');
       setStatus('Model replied: ' + reply);
       $('chatgptPromptPreview').style.display = 'none';
       if (promptPreviewResolve) {
@@ -3531,8 +3524,12 @@ async function askQuestion(qOverride, imageBase64 = null) {
   }
 
   // Fallback check for Cerebras
-  if (!effectiveKey && effectiveProvider === 'cerebras' && envConfig.cerebrasApiKey) {
-    effectiveKey = envConfig.cerebrasApiKey;
+  if (!effectiveKey && effectiveProvider === 'cerebras') {
+    effectiveKey = (window._rawSettings?.apiKeys?.cerebras) ||
+                   (envConfig?.savedApiKeys?.cerebras) ||
+                   window._rawSettings?.apiKey ||
+                   envConfig?.cerebrasApiKey || '';
+    if (effectiveKey) $('apiKey').value = effectiveKey;
   }
 
   // ── Screen images: vision models read the image; text-only models get an OCR transcript ──
@@ -3598,6 +3595,12 @@ async function askQuestion(qOverride, imageBase64 = null) {
   ipcRenderer.send('question-asked', { question, startTime: qStartTime });
   if (!sessionStart) { sessionStart = new Date().toISOString(); currentSessionQA = []; }
 
+  // Immediately render input question in control panel for instant visible feedback:
+  const transcriptEl = $('transcript');
+  if (transcriptEl) {
+    transcriptEl.innerHTML = `<div style="color:var(--text1);font-weight:600;font-size:12px;margin-bottom:3px;">🗣️ Input Question:</div><div style="color:var(--accent);font-size:12px;margin-bottom:8px;line-height:1.4;">${esc(question)}</div><div id="ctrlLiveAnswer" style="font-size:11px;color:var(--text3);white-space:pre-wrap;background:rgba(255,255,255,0.03);padding:6px;border-radius:4px;border:1px solid var(--border);">⏳ Connecting to ${effectiveProvider.toUpperCase()} (${cfg.model})…</div>`;
+  }
+
   if (!testMode && !effectiveKey) {
     setStatus('⚠ Enter your API key first (or enable Test Mode)');
     ipcRenderer.send('answer-chunk', '⚠ **Missing API Key**\nPlease enter your API key in the control panel to use this model, or turn on Test Mode.');
@@ -3626,6 +3629,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
   }
 
   let fullAnswer = '';
+  let isCurrentlyReasoning = false;
   setStatus('Generating answer…');
   const controlTimerInterval = setInterval(() => {
     if (!isGenerating) {
@@ -3633,7 +3637,11 @@ async function askQuestion(qOverride, imageBase64 = null) {
       return;
     }
     const sec = ((Date.now() - qStartTime) / 1000).toFixed(1);
-    setStatus(`Generating answer… (${sec}s)`);
+    if (isCurrentlyReasoning) {
+      setStatus(`🤔 ${effectiveProvider.toUpperCase()} is reasoning… (${sec}s)`);
+    } else {
+      setStatus(`⚡ Generating answer… (${sec}s)`);
+    }
   }, 250);
   try {
     const headers = { 'Content-Type': 'application/json' };
@@ -3966,9 +3974,15 @@ async function askQuestion(qOverride, imageBase64 = null) {
           }
 
           // Live indicator if reasoning model is streaming reasoning tokens
-          const reasoningContent = p.choices?.[0]?.delta?.reasoning_content;
+          const reasoningContent = p.choices?.[0]?.delta?.reasoning_content || p.choices?.[0]?.delta?.reasoning;
           if (reasoningContent && !fullAnswer) {
-            setStatus('🤔 Reasoning in progress…');
+            isCurrentlyReasoning = true;
+            setStatus(`🤔 ${effectiveProvider.toUpperCase()} is reasoning…`);
+            ipcRenderer.send('reasoning-status', { isReasoning: true });
+            const liveAns = $('ctrlLiveAnswer');
+            if (liveAns && !fullAnswer) {
+              liveAns.innerHTML = `<span style="color:#f59e0b;font-weight:600;">🤔 Reasoning in progress…</span>`;
+            }
           }
 
           let chunk = '';
@@ -3977,7 +3991,11 @@ async function askQuestion(qOverride, imageBase64 = null) {
             if (p.type === 'response.output_text.delta') {
               chunk = p.delta || '';
             } else if (p.type === 'response.reasoning_summary_text.delta') {
-              if (!fullAnswer) setStatus('🤔 Reasoning in progress…');
+              if (!fullAnswer) {
+                isCurrentlyReasoning = true;
+                setStatus('🤔 Reasoning in progress…');
+                ipcRenderer.send('reasoning-status', { isReasoning: true });
+              }
             } else if (p.type === 'response.failed' || p.type === 'error') {
               streamError = p.response?.error?.message || p.error?.message || p.message || 'Responses API stream error';
             }
@@ -3989,6 +4007,10 @@ async function askQuestion(qOverride, imageBase64 = null) {
             }
           }
           if (chunk) {
+            if (isCurrentlyReasoning) {
+              isCurrentlyReasoning = false;
+              ipcRenderer.send('reasoning-status', { isReasoning: false });
+            }
             fullAnswer += chunk;
             let displayChunk = chunk;
             
@@ -4011,6 +4033,10 @@ async function askQuestion(qOverride, imageBase64 = null) {
 
             if (displayChunk) {
               ipcRenderer.send('answer-chunk', displayChunk);
+              const liveAns = $('ctrlLiveAnswer');
+              if (liveAns) {
+                liveAns.textContent = fullAnswer.length > 300 ? '…' + fullAnswer.slice(-300) : fullAnswer;
+              }
             }
           }
         } catch {}
@@ -4031,10 +4057,18 @@ async function askQuestion(qOverride, imageBase64 = null) {
     bumpUsage();
     let cacheInfo = cachedTokensFound > 0 ? ` ⚡ (Cache Hit: ${cachedTokensFound} tokens)` : '';
     setStatus(`✓ Answer ready in ${totalSec}s — ${currentSessionQA.length} Q&A this session${cacheInfo}`);
+    const liveAns = $('ctrlLiveAnswer');
+    if (liveAns) {
+      liveAns.innerHTML = `<span style="color:var(--accent);font-weight:600;">✓ Answer Complete (${totalSec}s)</span> — View formatted response in Overlay Window.`;
+    }
 
   } catch(err) {
     clearInterval(controlTimerInterval);
     clearTimeout(watchdogTimer);
+    const liveAns = $('ctrlLiveAnswer');
+    if (liveAns) {
+      liveAns.innerHTML = `<span style="color:var(--danger);font-weight:600;">⚠ Error:</span> ${esc(err.message)}`;
+    }
     if (err.name === 'AbortError') {
       if (watchdogFired) {
         const timeoutMsg = `\n\n⏱️ **Request Timeout (35s)**: The ${effectiveProvider.toUpperCase()} API took too long to respond. Automatically cancelled to prevent app freeze.\n\n👉 **Tip**: Switch to **Google Gemini** or **Groq** in the overlay model selector for ultra-fast responses.`;
