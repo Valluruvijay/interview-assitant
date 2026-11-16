@@ -648,6 +648,7 @@ function showOverlayToast(text) {
 
 const OVERLAY_MODELS = [
   { value: 'cerebras:qwen-3.8-27b', label: '⚡ Cerebras (Qwen 3.8 27B)' },
+  { value: 'cerebras:gpt-oss-120b', label: '🧠 Cerebras (GPT-OSS 120B)' },
   { value: 'gemini2:gemini-3.8-flash', label: '🟢 Gemini 3.8 Flash' },
   { value: 'chatgpt:gpt-6-luna', label: '⚡ GPT-6 Luna' },
   { value: 'deepseek:deepseek-reasoner', label: '🧠 DeepSeek Reasoner' },
@@ -1429,7 +1430,28 @@ ipcRenderer.on('answer-chunk', (_, chunk) => {
     const orb = $('orb');
     if (orb) orb.style.background = '#FAC775';
   }
-  if (!currentAnswerContent) return;
+  if (!currentAnswerContent) {
+    const container = $('chatContainer');
+    if (container) {
+      const idleEl = $('idle');
+      if (idleEl) hide(idleEl);
+      currentPair = document.createElement('div');
+      currentPair.className = 'chat-pair';
+      const aBubble = document.createElement('div');
+      aBubble.className = 'bubble bubble-a';
+      const aLabel = document.createElement('div');
+      aLabel.className = 'bubble-label';
+      aLabel.innerHTML = '<span>⚡ AI Answer</span>';
+      aBubble.appendChild(aLabel);
+      currentAnswerContent = document.createElement('div');
+      currentAnswerContent.className = 'bubble-content';
+      aBubble.appendChild(currentAnswerContent);
+      currentPair.appendChild(aBubble);
+      container.appendChild(currentPair);
+    } else {
+      return;
+    }
+  }
   currentA += chunk;
   
   // Capture TTFT (Time To First Token) at the exact moment first text arrives

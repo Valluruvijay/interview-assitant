@@ -598,7 +598,7 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
     <div class="prompt-actions">
       <button class="btn-secondary" onclick="cancelChatGPTPromptPreview()">Cancel</button>
       <button class="btn-secondary" onclick="skipChatGPTPromptPreview()" style="margin-left:auto;">Skip</button>
-      <button class="btn-primary" onclick="approveChatGPTPromptPreview()">Send to ChatGPT</button>
+      <button class="btn-primary" id="approvePromptBtn" onclick="approveChatGPTPromptPreview()">Approve &amp; Start Interview</button>
     </div>
   </div>
 </div>
@@ -854,7 +854,10 @@ function beginInterviewListening() {
 
 async function startFullInterview() {
   refreshSetupStateFromInputs();
-  beginInterviewListening();
+  const shouldStart = await showChatGPTPromptPreview();
+  if (shouldStart) {
+    beginInterviewListening();
+  }
 }
 
 function prepareInterview() {
@@ -877,6 +880,9 @@ function prepareInterview() {
   
   setTimeout(async () => {
     $('setupOverlay').style.display = 'none';
+
+    const shouldStart = await showChatGPTPromptPreview();
+    if (!shouldStart) return;
 
     document.querySelector('.tabs').style.display = 'none';
     document.querySelector('.titlebar').style.display = 'none'; // Hide titlebar as requested
@@ -1127,7 +1133,8 @@ function populateAiModels(provider) {
   let models = [];
   if (provider === 'cerebras') {
     models = [
-      { id: 'qwen-3.8-27b', label: 'Qwen 3.8 27B (Ultra-Fast)' }
+      { id: 'qwen-3.8-27b', label: 'Qwen 3.8 27B (Ultra-Fast Thinking)' },
+      { id: 'gpt-oss-120b', label: 'GPT-OSS 120B (High Reasoning)' }
     ];
     if (!models.map(m => m.id).includes(PROVIDERS.cerebras.model)) {
       PROVIDERS.cerebras.model = 'qwen-3.8-27b';
@@ -3355,25 +3362,22 @@ function showChatGPTPromptPreview(force = false) {
   textArea.value = prompt;
   if (meta) meta.textContent = `${Array.from(selectedTechs).length || 0} tools selected`;
   
+  let pName = 'ChatGPT';
+  if (currentProvider === 'gemini') pName = 'Google Gemini';
+  else if (currentProvider === 'gemini2') pName = 'Google Gemini 2';
+  else if (currentProvider === 'groq') pName = 'Groq';
+  else if (currentProvider === 'deepseek') pName = 'DeepSeek';
+  else if (currentProvider === 'cerebras') pName = 'Cerebras Cloud';
+  else pName = 'ChatGPT';
+
   const title = modal.querySelector('.prompt-title');
-  if (title) {
-        if (currentProvider === 'gemini') title.textContent = 'Gemini Interview Prompt Preview';
-    else if (currentProvider === 'gemini2') title.textContent = 'Gemini 2 Interview Prompt Preview';
-    else if (currentProvider === 'groq') title.textContent = 'Groq Interview Prompt Preview';
-    else if (currentProvider === 'deepseek') title.textContent = 'DeepSeek Interview Prompt Preview';
-    else if (currentProvider === 'cerebras') title.textContent = 'Cerebras Interview Prompt Preview';
-    else title.textContent = 'ChatGPT Interview Prompt Preview';
-  }
+  if (title) title.textContent = `${pName} Interview Prompt Preview`;
+
+  const btn = $('approvePromptBtn');
+  if (btn) btn.textContent = `Approve & Start (${pName})`;
 
   modal.style.display = 'flex';
-  
-  let pName = 'ChatGPT';
-    if (currentProvider === 'gemini') pName = 'Gemini';
-  else if (currentProvider === 'gemini2') pName = 'Gemini 2';
-  if (currentProvider === 'groq') pName = 'Groq';
-  if (currentProvider === 'deepseek') pName = 'DeepSeek';
-  if (currentProvider === 'cerebras') pName = 'Cerebras';
-  setStatus(`Editing ${pName} base instructions.`);
+  setStatus(`Reviewing ${pName} interview prompt…`);
 
   return new Promise(resolve => {
     promptPreviewResolve = resolve;
@@ -3384,7 +3388,7 @@ function skipChatGPTPromptPreview() {
   chatgptPromptOverride = $('chatgptPromptText')?.value?.trim() || buildChatGPTSystemPrompt('', false);
   chatgptPromptApproved = true;
   $('chatgptPromptPreview').style.display = 'none';
-  setStatus('Skipped prompt verification.');
+  setStatus('Prompt approved. Starting interview…');
   if (promptPreviewResolve) {
     promptPreviewResolve(true);
     promptPreviewResolve = null;
@@ -3395,74 +3399,14 @@ async function approveChatGPTPromptPreview() {
   chatgptPromptOverride = $('chatgptPromptText')?.value?.trim() || buildChatGPTSystemPrompt('', false);
   chatgptPromptApproved = true;
   
-  const meta = $('chatgptPromptMeta');
-  const originalMeta = meta ? meta.textContent : '';
-  let pName = 'ChatGPT';
-    if (currentProvider === 'gemini') pName = 'Gemini';
-  else if (currentProvider === 'gemini2') pName = 'Gemini 2';
-  if (currentProvider === 'groq') pName = 'Groq';
-  if (currentProvider === 'deepseek') pName = 'DeepSeek';
-  if (currentProvider === 'cerebras') pName = 'Cerebras';
-  if (meta) meta.textContent = `Sending to ${pName} for acknowledgement...`;
-  setStatus('Sending prompt to model...');
-
-  try {
-    const key = $('apiKey').value.trim();
-    if (!key) throw new Error("API key missing. Enter it in setup.");
-    
-    const prov = PROVIDERS[currentProvider];
-    const model = prov.model;
-    const ackViaResponses = currentProvider === 'chatgpt' && window.chatgptResponsesEnabled !== false;
-
-    const endpoint = prov.apiBase + (ackViaResponses ? '/responses' : '/chat/completions');
-    
-    const reqBody = ackViaResponses ? {
-      model: model,
-      instructions: chatgptPromptOverride,
-      input: 'Acknowledge that you have received these instructions by replying exactly with "Prompt received".',
-      max_output_tokens: 50,
-      store: false
-    } : {
-      model: model,
-      messages: [
-        { role: 'system', content: chatgptPromptOverride },
-        { role: 'user', content: 'Acknowledge that you have received these instructions by replying exactly with "Prompt received".' }
-      ]
-    };
-
-    if (!ackViaResponses) {
-      if (currentProvider === 'chatgpt') {
-        reqBody.max_completion_tokens = 500;
-      } else {
-        reqBody.max_tokens = 500;
-      }
-    }
-
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-      body: JSON.stringify(reqBody)
-    });
-    
-    if (res.ok) {
-      const data = await res.json();
-      const reply = ackViaResponses
-        ? (data.output_text || (data.output || []).flatMap(o => o.content || []).map(c => c.text || '').join(''))
-        : (data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning || 'Prompt received');
-      setStatus('Model replied: ' + reply);
-      $('chatgptPromptPreview').style.display = 'none';
-      if (promptPreviewResolve) {
-        promptPreviewResolve(true);
-        promptPreviewResolve = null;
-      }
-    } else {
-      throw new Error(`HTTP ${res.status}`);
-    }
-  } catch(e) {
-      if (meta) meta.textContent = `Error: ${e.message}`;
-      setStatus(`Failed to verify prompt: ${e.message}`);
-      setTimeout(() => { if (meta) meta.textContent = originalMeta; }, 3000);
+  $('chatgptPromptPreview').style.display = 'none';
+  if (promptPreviewResolve) {
+    promptPreviewResolve(true);
+    promptPreviewResolve = null;
   }
+
+  let pName = currentProvider.toUpperCase();
+  setStatus(`✓ ${pName} prompt approved. Launching interview overlay…`);
 }
 
 function cancelChatGPTPromptPreview() {
@@ -3523,13 +3467,19 @@ async function askQuestion(qOverride, imageBase64 = null) {
     }
   }
 
-  // Fallback check for Cerebras
-  if (!effectiveKey && effectiveProvider === 'cerebras') {
-    effectiveKey = (window._rawSettings?.apiKeys?.cerebras) ||
-                   (envConfig?.savedApiKeys?.cerebras) ||
-                   window._rawSettings?.apiKey ||
+  // Guard against cross-provider key mismatch for Cerebras:
+  if (effectiveProvider === 'cerebras') {
+    if (!effectiveKey || !effectiveKey.startsWith('csk-')) {
+      const cKey = (envConfig?.savedApiKeys?.cerebras) ||
+                   (window._rawSettings?.apiKeys?.cerebras) ||
+                   (window._rawSettings?.apiKey?.startsWith('csk-') ? window._rawSettings?.apiKey : '') ||
                    envConfig?.cerebrasApiKey || '';
-    if (effectiveKey) $('apiKey').value = effectiveKey;
+      if (cKey && cKey.startsWith('csk-')) {
+        console.log('[Cerebras Guard] Restored valid Cerebras API key.');
+        effectiveKey = cKey;
+        $('apiKey').value = cKey;
+      }
+    }
   }
 
   // ── Screen images: vision models read the image; text-only models get an OCR transcript ──
@@ -3701,16 +3651,22 @@ async function askQuestion(qOverride, imageBase64 = null) {
     }
     let modelsToTry = [];
     const selectEl = document.getElementById('aiModelSelect');
-    if (selectEl && selectEl.options.length > 0) {
-      modelsToTry.push(selectEl.value);
-      for (let i = 0; i < selectEl.options.length; i++) {
-        if (selectEl.options[i].value !== selectEl.value) {
-          modelsToTry.push(selectEl.options[i].value);
+    if (effectiveProvider === 'cerebras') {
+      const cerebrasModels = ['qwen-3.8-27b', 'gpt-oss-120b'];
+      const chosen = (selectEl && cerebrasModels.includes(selectEl.value)) ? selectEl.value : (cfg.model || 'qwen-3.8-27b');
+      modelsToTry = [chosen, ...cerebrasModels.filter(m => m !== chosen)];
+    } else {
+      if (selectEl && selectEl.options.length > 0) {
+        modelsToTry.push(selectEl.value);
+        for (let i = 0; i < selectEl.options.length; i++) {
+          if (selectEl.options[i].value !== selectEl.value) {
+            modelsToTry.push(selectEl.options[i].value);
+          }
         }
       }
-    }
-    if (modelsToTry.length === 0) {
-      modelsToTry.push(cfg.model || 'gemini-3.5-flash-lite');
+      if (modelsToTry.length === 0) {
+        modelsToTry.push(cfg.model || 'gemini-3.5-flash-lite');
+      }
     }
 
     let res;
