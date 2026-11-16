@@ -622,6 +622,7 @@ function closeAppFresh() {
 }
 
 let isNextFollowUp = false;
+var antiTabShieldActive = true;
 
 ipcRenderer.on('toggle-followup-remote', () => {
   isNextFollowUp = !isNextFollowUp;
@@ -4175,8 +4176,6 @@ function setTheme(el, theme) {
 function moveToDisplay(index) {
   ipcRenderer.send('move-overlay-to-display', parseInt(index));
 }
-
-let antiTabShieldActive = true;
 
 function toggleControlShield() {
   ipcRenderer.send('toggle-anti-tab-shield');

@@ -382,6 +382,14 @@ function createControl() {
     controlWin.focus();
   });
 
+  // Guarantee window is always shown even if ready-to-show event is delayed
+  setTimeout(() => {
+    if (controlWin && !controlWin.isDestroyed() && !controlWin.isVisible()) {
+      controlWin.show();
+      controlWin.focus();
+    }
+  }, 1000);
+
   controlWin.on('closed', () => {
     controlWin = null;
     if (overlayWin && !overlayWin.isDestroyed()) overlayWin.close();
@@ -400,6 +408,7 @@ if (!isPrimaryInstance) {
 } else {
   app.on('second-instance', () => {
     if (controlWin && !controlWin.isDestroyed()) {
+      if (controlWin.isMinimized()) controlWin.restore();
       controlWin.setSkipTaskbar(false);
       controlWin.show();
       controlWin.focus();
