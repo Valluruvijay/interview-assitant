@@ -58,6 +58,19 @@ try {
   if (!fs.existsSync(userDataPath)) fs.mkdirSync(userDataPath, { recursive: true });
   app.setPath('userData', userDataPath);
 } catch (_) {}
+
+process.on('exit', (code) => {
+  console.log('[PROCESS EXIT EVENT] Process exiting with code:', code);
+});
+app.on('before-quit', () => {
+  console.log('[APP BEFORE-QUIT EVENT]');
+});
+app.on('will-quit', () => {
+  console.log('[APP WILL-QUIT EVENT]');
+});
+app.on('quit', (event, exitCode) => {
+  console.log('[APP QUIT EVENT] Exit code:', exitCode);
+});
 const settingsFile = path.join(userDataPath, 'settings.json');
 const sessionsFile = path.join(userDataPath, 'sessions.json');
 
@@ -422,6 +435,7 @@ function createControl() {
   }, 1000);
 
   controlWin.on('closed', () => {
+    console.log('[MAIN] controlWin was closed by user or system');
     controlWin = null;
     if (overlayWin && !overlayWin.isDestroyed()) {
       try { overlayWin.destroy(); } catch (_) {}
@@ -984,6 +998,7 @@ ipcMain.on('minimize-control', () => {
   }
 });
 ipcMain.on('close-app', () => {
+  console.log('[MAIN] close-app IPC was invoked');
   if (overlayWin && !overlayWin.isDestroyed()) {
     try { overlayWin.destroy(); } catch (_) {}
   }
