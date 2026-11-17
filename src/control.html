@@ -12,16 +12,16 @@
   --danger:#f09595;--warning:#EF9F27;
 }
 html, body{font-family:'Segoe UI',sans-serif;background:var(--bg) !important;background-color:#0d1117 !important;color-scheme:dark;color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
-.titlebar{display:flex;align-items:center;padding:8px 14px;background:var(--bg2);border-bottom:1px solid var(--border);-webkit-app-region:drag;flex-shrink:0;}
-.tb-logo{display:flex;align-items:center;gap:7px;margin-right:auto;}
+.titlebar{display:flex;align-items:center;padding:8px 14px;background:var(--bg2);border-bottom:1px solid var(--border);-webkit-app-region:drag;flex-shrink:0;user-select:none;}
+.tb-logo{display:flex;align-items:center;gap:7px;margin-right:auto;pointer-events:none;}
 .tb-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);}
 .tb-name{font-size:13px;font-weight:600;}
 .tb-ver{font-size:10px;color:var(--text3);margin-left:2px;}
-.tb-btns{display:flex;gap:4px;-webkit-app-region:no-drag !important;}
-.tb-btn{width:28px;height:22px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--text2);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s;-webkit-app-region:no-drag !important;pointer-events:auto !important;}
+.tb-btns{display:flex;gap:6px;-webkit-app-region:no-drag !important;position:relative;z-index:99999;pointer-events:auto !important;}
+.tb-btn{width:30px;height:24px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--text2);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s;-webkit-app-region:no-drag !important;pointer-events:auto !important;position:relative;z-index:99999;}
 .tb-btn svg{pointer-events:none !important;}
-.tb-btn:hover{background:var(--bg3);}
-.tb-btn.close:hover{background:rgba(240,149,149,0.15);color:var(--danger);border-color:rgba(240,149,149,0.3);}
+.tb-btn:hover{background:var(--bg3);color:var(--text);border-color:var(--border2);}
+.tb-btn.close:hover{background:rgba(240,149,149,0.2);color:var(--danger);border-color:rgba(240,149,149,0.4);}
 .tabs{display:flex;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0;}
 .tab{padding:9px 16px;font-size:12px;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;transition:all 0.15s;white-space:nowrap;}
 .tab.active{color:var(--accent);border-bottom-color:var(--accent);}
@@ -166,14 +166,39 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
     <span class="tb-ver">v2.0</span>
   </div>
   <div class="tb-btns">
-    <button type="button" class="tb-btn" onclick="minimizeControl()" title="Minimize" aria-label="Minimize">
+    <button type="button" class="tb-btn" id="titlebarMinBtn" onclick="minimizeControl()" title="Minimize" aria-label="Minimize">
       <svg width="10" height="2" viewBox="0 0 10 2" fill="currentColor"><rect width="10" height="2" rx="1"/></svg>
     </button>
-    <button type="button" class="tb-btn close" onclick="closeAppFresh()" title="Close" aria-label="Close">
+    <button type="button" class="tb-btn close" id="titlebarCloseBtn" onclick="closeAppFresh()" title="Close" aria-label="Close">
       <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 1l8 8M9 1l-8 8"/></svg>
     </button>
   </div>
 </div>
+<script>
+  (function() {
+    try {
+      const { ipcRenderer } = require('electron');
+      window.minimizeControl = function() {
+        try { ipcRenderer.send('minimize-control'); } catch(e) { console.error(e); }
+      };
+      window.closeAppFresh = function() {
+        try { ipcRenderer.send('close-app'); } catch(e) { console.error(e); }
+      };
+      window.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('titlebarMinBtn')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.minimizeControl();
+        });
+        document.getElementById('titlebarCloseBtn')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.closeAppFresh();
+        });
+      });
+    } catch(err) {
+      console.warn('[Early titlebar handler]', err);
+    }
+  })();
+</script>
 <div class="tabs">
   <div class="tab active" onclick="switchTab('live',this)">🎤 Live</div>
   <div class="tab" onclick="switchTab('setup',this)">🛠 Setup</div>
@@ -484,6 +509,15 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
       <div class="row" style="margin-top:7px;">
         <button class="btn-primary" id="askBtn" onclick="askQuestion()">⚡ Get AI Answer</button>
         <button class="btn-danger" onclick="clearAll()">✕ Clear</button>
+      </div>
+
+      <!-- Instant Live Output Card right below the Ask button -->
+      <div id="manualOutputContainer" style="display:none; margin-top:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg3); padding:10px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+          <span id="manualOutputTitle" style="font-size:11px; font-weight:700; color:var(--accent);">⚡ AI Answer</span>
+          <span id="manualOutputBadge" style="font-size:10px; color:var(--text3);"></span>
+        </div>
+        <div id="manualLiveAnswer" style="font-size:12px; color:var(--text); line-height:1.45; white-space:pre-wrap; max-height:240px; overflow-y:auto; user-select:text;"></div>
       </div>
     </div>
 
@@ -1067,7 +1101,8 @@ function updateModelTuningUI() {
   // Check if provider/model supports reasoning effort parameter
   const isReasoningSupported = (prov === 'chatgpt' && (model.includes('luna') || model.includes('o1') || model.includes('o3'))) ||
                                (prov === 'gemini' || prov === 'gemini2') ||
-                               (prov === 'deepseek');
+                               (prov === 'deepseek') ||
+                               (prov === 'cerebras');
 
   if (isReasoningSupported) {
     if (reasonRow) reasonRow.style.display = 'block';
@@ -1077,6 +1112,7 @@ function updateModelTuningUI() {
       if (prov === 'chatgpt') reasonLabel.textContent = 'GPT-6 Luna Reasoning Mode';
       else if (prov.startsWith('gemini')) reasonLabel.textContent = 'Gemini Reasoning / Thinking Mode';
       else if (prov === 'deepseek') reasonLabel.textContent = 'DeepSeek Reasoning / Thinking Mode';
+      else if (prov === 'cerebras') reasonLabel.textContent = 'Cerebras Reasoning / Thinking Mode';
     }
 
     const effort = reasonSelect?.value || window.currentReasoningEffort || 'none';
@@ -1091,6 +1127,8 @@ function updateModelTuningUI() {
           tempHint.textContent = 'Option A Active: Thinking disabled for instant responses. Custom temperature is active.';
         } else if (prov === 'deepseek') {
           tempHint.textContent = 'Option A Active: DeepSeek standard fast mode. Recommended 0.30 for deterministic Apex.';
+        } else if (prov === 'cerebras') {
+          tempHint.textContent = 'Option A Active: Zero-delay ultra-fast mode (reasoning off). Responses arrive in under 1 second.';
         } else {
           tempHint.textContent = 'Option A Active: Custom temperature is active. Fast, zero-lag streaming.';
         }
@@ -2036,9 +2074,13 @@ async function transcribeChunk(blob) {
 
 async function startMic() {
   if (sttEngine === 'gemini' || sttEngine === 'gemini38') {
-    let geminiKey = $('geminiSttApiKey')?.value?.trim() || 
-                    (envConfig.savedApiKeys && (envConfig.savedApiKeys['gemini'] || envConfig.savedApiKeys['gemini2'])) || 
-                    $('apiKey')?.value?.trim();
+    let geminiKey = ($('geminiSttApiKey')?.value?.trim()?.startsWith('AIza') ? $('geminiSttApiKey').value.trim() : '') ||
+                    (window._rawSettings?.geminiSttApiKey?.startsWith('AIza') ? window._rawSettings.geminiSttApiKey : '') ||
+                    (window._rawSettings?.apiKeys?.gemini?.startsWith('AIza') ? window._rawSettings.apiKeys.gemini : '') ||
+                    (window._rawSettings?.apiKeys?.gemini2?.startsWith('AIza') ? window._rawSettings.apiKeys.gemini2 : '') ||
+                    (envConfig?.savedApiKeys?.gemini?.startsWith('AIza') ? envConfig.savedApiKeys.gemini : '') ||
+                    (envConfig?.savedApiKeys?.gemini2?.startsWith('AIza') ? envConfig.savedApiKeys.gemini2 : '') ||
+                    ($('apiKey')?.value?.trim()?.startsWith('AIza') ? $('apiKey').value.trim() : '');
     const modelTag = sttEngine === 'gemini38' ? 'models/gemini-3.8-live' : 'models/gemini-3.5-transcribe-live';
     const label = sttEngine === 'gemini38' ? 'Gemini 3.8 Live' : 'Gemini 3.5 Transcribe Live';
     if (!geminiKey) {
@@ -2157,7 +2199,8 @@ function updateAutoSendHint() {
 }
 
 function submitOrQueue(question, imageBase64 = null) {
-  if (window.autoSendEnabled === false) {
+  const isPractice = document.getElementById('practiceModeToggle')?.checked;
+  if (!isPractice && window.autoSendEnabled === false) {
     queuePendingQuestion(question);
     return;
   }
@@ -3604,6 +3647,17 @@ async function askQuestion(qOverride, imageBase64 = null) {
   if (transcriptEl) {
     transcriptEl.innerHTML = `<div style="color:var(--text1);font-weight:600;font-size:12px;margin-bottom:3px;">🗣️ Input Question:</div><div style="color:var(--accent);font-size:12px;margin-bottom:8px;line-height:1.4;">${esc(question)}</div><div id="ctrlLiveAnswer" style="font-size:11px;color:var(--text3);white-space:pre-wrap;background:rgba(255,255,255,0.03);padding:6px;border-radius:4px;border:1px solid var(--border);">⏳ Connecting to ${effectiveProvider.toUpperCase()} (${cfg.model})…</div>`;
   }
+  const manualBox = $('manualOutputContainer');
+  const manualLive = $('manualLiveAnswer');
+  const manualBadge = $('manualOutputBadge');
+  const manualTitle = $('manualOutputTitle');
+  if (manualBox && manualLive) {
+    manualBox.style.display = 'block';
+    if (manualTitle) manualTitle.textContent = `⚡ AI Answer (${effectiveProvider.toUpperCase()})`;
+    if (manualBadge) manualBadge.textContent = '⏳ Connecting…';
+    manualLive.innerHTML = `<span style="color:var(--text3);">⏳ Connecting to ${effectiveProvider.toUpperCase()} (${cfg.model})…</span>`;
+    try { manualBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (_) {}
+  }
 
   if (!testMode && !effectiveKey) {
     setStatus('⚠ Enter your API key first (or enable Test Mode)');
@@ -3863,6 +3917,17 @@ async function askQuestion(qOverride, imageBase64 = null) {
             requestBody.reasoning_effort = (activeEffort === 'xhigh' ? 'max' : (activeEffort === 'medium' ? 'high' : activeEffort));
             delete requestBody.temperature;
           }
+        } else if (effectiveProvider === 'cerebras') {
+          requestBody.max_tokens = maxTokensBudget;
+          if (activeEffort === 'none') {
+            // Option A: Fast Mode (Reasoning OFF — Ultra-Fast Sub-Second Streaming)
+            requestBody.reasoning_effort = 'none';
+            requestBody.temperature = userTemp;
+          } else {
+            // Option B: Reasoning ON (low / medium / high)
+            requestBody.reasoning_effort = (activeEffort === 'xhigh' ? 'high' : activeEffort);
+            delete requestBody.temperature;
+          }
         } else {
           requestBody.max_tokens = maxTokensBudget;
           requestBody.temperature = userTemp;
@@ -3953,6 +4018,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
     const decoder = new TextDecoder();
     let buf = '';
     let rawAccumulatedAnswer = '';
+    let rawAccumulatedReasoning = '';
     let cleanAnswerStreamed = 0;
     let cachedTokensFound = 0;
     let streamError = null;
@@ -4004,13 +4070,22 @@ async function askQuestion(qOverride, imageBase64 = null) {
 
           // Live indicator if reasoning model is streaming reasoning tokens (Cerebras delta.reasoning, DeepSeek delta.reasoning_content)
           const reasoningDelta = p.choices?.[0]?.delta?.reasoning_content || p.choices?.[0]?.delta?.reasoning;
-          if (reasoningDelta && !cleanAnswerStreamed) {
-            isCurrentlyReasoning = true;
-            setStatus(`🤔 ${effectiveProvider.toUpperCase()} is reasoning…`);
-            ipcRenderer.send('reasoning-status', { isReasoning: true });
-            const liveAns = $('ctrlLiveAnswer');
-            if (liveAns) {
-              liveAns.innerHTML = `<span style="color:#f59e0b;font-weight:600;">🤔 Reasoning in progress…</span>`;
+          if (reasoningDelta) {
+            rawAccumulatedReasoning += reasoningDelta;
+            if (!cleanAnswerStreamed) {
+              isCurrentlyReasoning = true;
+              setStatus(`🤔 ${effectiveProvider.toUpperCase()} is reasoning…`);
+              ipcRenderer.send('reasoning-status', { isReasoning: true });
+              const liveAns = $('ctrlLiveAnswer');
+              if (liveAns) {
+                liveAns.innerHTML = `<span style="color:#f59e0b;font-weight:600;">🤔 Reasoning in progress…</span>`;
+              }
+              const manualLive = $('manualLiveAnswer');
+              const manualBadge = $('manualOutputBadge');
+              if (manualLive) {
+                manualLive.innerHTML = `<span style="color:#f59e0b;font-weight:600;">🤔 Reasoning in progress…</span>`;
+              }
+              if (manualBadge) manualBadge.textContent = '🤔 Reasoning';
             }
           }
 
@@ -4037,6 +4112,12 @@ async function askQuestion(qOverride, imageBase64 = null) {
                 if (liveAns) {
                   liveAns.innerHTML = `<span style="color:#f59e0b;font-weight:600;">🤔 Reasoning in progress…</span>`;
                 }
+                const manualLive = $('manualLiveAnswer');
+                const manualBadge = $('manualOutputBadge');
+                if (manualLive) {
+                  manualLive.innerHTML = `<span style="color:#f59e0b;font-weight:600;">🤔 Reasoning in progress…</span>`;
+                }
+                if (manualBadge) manualBadge.textContent = '🤔 Reasoning';
               }
             }
 
@@ -4052,6 +4133,13 @@ async function askQuestion(qOverride, imageBase64 = null) {
               if (liveAns) {
                 liveAns.textContent = currentVisibleAnswer.length > 300 ? '…' + currentVisibleAnswer.slice(-300) : currentVisibleAnswer;
               }
+              const manualLive = $('manualLiveAnswer');
+              const manualBadge = $('manualOutputBadge');
+              if (manualLive) {
+                manualLive.textContent = currentVisibleAnswer;
+                manualLive.scrollTop = manualLive.scrollHeight;
+              }
+              if (manualBadge) manualBadge.textContent = '⚡ Streaming…';
             }
           }
         } catch {}
@@ -4061,6 +4149,9 @@ async function askQuestion(qOverride, imageBase64 = null) {
     if (streamError) throw new Error(streamError);
 
     fullAnswer = (cleanAnswerStreamed > 0 ? rawAccumulatedAnswer.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() : rawAccumulatedAnswer.trim());
+    if (!fullAnswer && rawAccumulatedReasoning) {
+      fullAnswer = rawAccumulatedReasoning.trim();
+    }
 
     clearInterval(controlTimerInterval);
     ipcRenderer.send('answer-done');
@@ -4082,6 +4173,14 @@ async function askQuestion(qOverride, imageBase64 = null) {
         <div style="color:var(--text);font-size:12px;line-height:1.45;white-space:pre-wrap;max-height:220px;overflow-y:auto;padding:8px;background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:5px;user-select:text;">${esc(fullAnswer)}</div>
       `;
     }
+    const manualLive = $('manualLiveAnswer');
+    const manualBadge = $('manualOutputBadge');
+    if (manualLive) {
+      manualLive.textContent = fullAnswer;
+    }
+    if (manualBadge) {
+      manualBadge.innerHTML = `<span style="color:var(--accent);font-weight:600;">✓ Complete (${totalSec}s)</span>`;
+    }
 
   } catch(err) {
     clearInterval(controlTimerInterval);
@@ -4089,6 +4188,14 @@ async function askQuestion(qOverride, imageBase64 = null) {
     const liveAns = $('ctrlLiveAnswer');
     if (liveAns) {
       liveAns.innerHTML = `<span style="color:var(--danger);font-weight:600;">⚠ Error:</span> ${esc(err.message)}`;
+    }
+    const manualLive = $('manualLiveAnswer');
+    const manualBadge = $('manualOutputBadge');
+    if (manualLive) {
+      manualLive.innerHTML = `<span style="color:var(--danger);font-weight:600;">⚠ Error:</span> ${esc(err.message)}`;
+    }
+    if (manualBadge) {
+      manualBadge.innerHTML = `<span style="color:var(--danger);font-weight:600;">⚠ Failed</span>`;
     }
     if (err.name === 'AbortError') {
       if (watchdogFired) {
