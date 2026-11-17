@@ -29,9 +29,11 @@ if (typeof globalThis.Path2D === 'undefined') {
   globalThis.Path2D = class Path2D {};
 }
 
-const { app, BrowserWindow, ipcMain, globalShortcut, screen, shell, dialog, session } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, screen, shell, dialog, session, powerMonitor, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
+
+let appSuspensionBlockerId = null;
 
 // Fix GPU cache access denied errors
 const os = require('os');
@@ -474,6 +476,24 @@ if (!isPrimaryInstance) {
     createOverlay();
     createControl();
     registerShortcuts();
+
+    if (powerMonitor) {
+      powerMonitor.on('suspend', () => {
+        console.log('[PowerMonitor] System is suspending (entering sleep/standby)...');
+        safeSend(controlWin, 'system-power-suspend');
+        safeSend(overlayWin, 'system-power-suspend');
+      });
+      powerMonitor.on('resume', () => {
+        console.log('[PowerMonitor] System resumed from sleep/standby');
+        safeSend(controlWin, 'system-power-resume');
+        safeSend(overlayWin, 'system-power-resume');
+      });
+      powerMonitor.on('unlock-screen', () => {
+        console.log('[PowerMonitor] System screen unlocked');
+        safeSend(controlWin, 'system-power-resume');
+        safeSend(overlayWin, 'system-power-resume');
+      });
+    }
   });
 }
 
@@ -793,7 +813,27 @@ ipcMain.on('end-session-from-overlay', () => {
 
 // Mic Toggle from Overlay
 ipcMain.on('toggle-mic-from-overlay', () => safeSend(controlWin, 'toggle-mic-remote'));
-ipcMain.on('mic-state-changed', (_, isListening) => safeSend(overlayWin, 'mic-state-changed', isListening));
+ipcMain.on('mic-state-changed', (_, isListening) => {
+  safeSend(overlayWin, 'mic-state-changed', isListening);
+  try {
+    if (powerSaveBlocker) {
+      if (isListening) {
+        if (appSuspensionBlockerId === null || !powerSaveBlocker.isStarted(appSuspensionBlockerId)) {
+          appSuspensionBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+          console.log('[Power] prevent-app-suspension active while listening (Blocker ID:', appSuspensionBlockerId, ')');
+        }
+      } else {
+        if (appSuspensionBlockerId !== null && powerSaveBlocker.isStarted(appSuspensionBlockerId)) {
+          powerSaveBlocker.stop(appSuspensionBlockerId);
+          console.log('[Power] prevent-app-suspension released');
+          appSuspensionBlockerId = null;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Power] powerSaveBlocker error:', err.message);
+  }
+});
 
 // Long Question Toggle
 ipcMain.on('toggle-long-q-from-overlay', () => safeSend(controlWin, 'toggle-long-q-remote'));

@@ -1847,6 +1847,138 @@ let geminiSysCommitted = '';
 let geminiSysTurnText = '';
 let geminiMicTurnText = '';
 
+// Resilient Reconnection & Power Lifecycle Management
+let micReconnectTimer = null;
+let micReconnectAttempts = 0;
+let sysReconnectTimer = null;
+let sysReconnectAttempts = 0;
+let selfHealTimer = null;
+let audioWatchdogTimer = null;
+window.isSystemSuspended = false;
+window.lastSpeechOrActivityTime = Date.now();
+
+function isStreamAlive(stream) {
+  if (!stream || typeof stream.getAudioTracks !== 'function') return false;
+  const tracks = stream.getAudioTracks();
+  return tracks.length > 0 && tracks.some(t => t.readyState === 'live');
+}
+
+function bindTrackLifecycle(stream, streamType) {
+  if (!stream || typeof stream.getAudioTracks !== 'function') return;
+  stream.getAudioTracks().forEach(track => {
+    track.onended = () => {
+      console.warn(`[Audio] ${streamType} track ended (hardware suspension/sleep/disconnect)`);
+      if (isListening && !window.isSystemSuspended) {
+        scheduleSelfHealingRestart(`${streamType}-track-ended`);
+      }
+    };
+  });
+}
+
+async function ensureLiveMicStream() {
+  if (isStreamAlive(micStream)) return micStream;
+  console.log('[Audio] Mic stream ended or missing. Re-acquiring microphone hardware...');
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioConstraints(), video: false });
+  } catch (err) {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch (fallbackErr) {
+      console.error('[Audio] Hardware mic re-acquisition failed:', fallbackErr.message);
+      return null;
+    }
+  }
+  if (micStream) {
+    bindTrackLifecycle(micStream, 'mic');
+    setActiveMicLabel(getTrackLabel(micStream));
+    console.log('✅ Hardware microphone successfully re-acquired');
+  }
+  return micStream;
+}
+
+function scheduleSelfHealingRestart(reason = 'audio-health-check') {
+  if (!isListening || window.isSystemSuspended) return;
+  if (selfHealTimer) clearTimeout(selfHealTimer);
+  selfHealTimer = setTimeout(async () => {
+    if (!isListening || window.isSystemSuspended) return;
+    console.log(`[Audio] 🔄 Performing self-healing audio restart (${reason})...`);
+    
+    // 1. Safely stop active recorders
+    try { if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop(); } catch(_) {}
+    try { if (sysMediaRecorder && sysMediaRecorder.state === 'recording') sysMediaRecorder.stop(); } catch(_) {}
+    
+    // 2. Re-acquire mic
+    const freshMic = await ensureLiveMicStream();
+    if (!freshMic) {
+      console.warn('[Audio] Self-heal: Mic hardware unavailable, retrying via exponential backoff');
+      if (window.activeMicReconnectScheduler) window.activeMicReconnectScheduler();
+      return;
+    }
+
+    // 3. Resume AudioContext if suspended
+    try {
+      if (sysAnalyser && sysAnalyser.context && sysAnalyser.context.state === 'suspended') {
+        await sysAnalyser.context.resume();
+        console.log('[Audio] sysAnalyser context resumed');
+      }
+      if (geminiAudioCtx && geminiAudioCtx.state === 'suspended') {
+        await geminiAudioCtx.resume();
+      }
+      if (geminiSysAudioCtx && geminiSysAudioCtx.state === 'suspended') {
+        await geminiSysAudioCtx.resume();
+      }
+    } catch (_) {}
+
+    // 4. Reconnect active STT engine with fresh stream
+    if (sttEngine === 'gemini' || sttEngine === 'gemini38') {
+      if (window.activeGeminiReconnect) window.activeGeminiReconnect();
+    } else {
+      if (window.activeDeepgramReconnect) window.activeDeepgramReconnect();
+    }
+  }, 1000);
+}
+
+function startAudioWatchdog() {
+  if (audioWatchdogTimer) clearInterval(audioWatchdogTimer);
+  audioWatchdogTimer = setInterval(() => {
+    if (!isListening || window.isSystemSuspended) return;
+    
+    // 1. Check if mic stream tracks died
+    if (micStream && !isStreamAlive(micStream)) {
+      console.warn('[Audio Watchdog] Mic stream tracks ended while listening. Triggering self-heal...');
+      scheduleSelfHealingRestart('watchdog-mic-ended');
+      return;
+    }
+
+    // 2. Check if sys stream tracks died (if running)
+    if (systemStream && !isStreamAlive(systemStream)) {
+      console.warn('[Audio Watchdog] System stream tracks ended while listening.');
+      scheduleSelfHealingRestart('watchdog-sys-ended');
+      return;
+    }
+
+    // 3. Check AudioContext state
+    if (sysAnalyser && sysAnalyser.context && sysAnalyser.context.state === 'suspended') {
+      console.log('[Audio Watchdog] sysAnalyser AudioContext was suspended, resuming...');
+      sysAnalyser.context.resume().catch(() => {});
+    }
+
+    // 4. Inactivity Buffer Flush: Clear stale noise if no speech for >5 minutes
+    const idleMs = Date.now() - (window.lastSpeechOrActivityTime || Date.now());
+    if (idleMs > 5 * 60 * 1000) {
+      if (finalTranscript || window.currentInterviewerText || candidateTranscript) {
+        console.log(`[Audio Watchdog] Clearing stale noise buffer after ${Math.round(idleMs/60000)}m idle`);
+        finalTranscript = '';
+        candidateFinalTranscript = '';
+        candidateTranscript = '';
+        window.currentInterviewerText = '';
+        const tEl = $('transcript');
+        if (tEl) tEl.innerHTML = '<span class="t-placeholder">Listening… (Background noise cleared)</span>';
+      }
+    }
+  }, 15000);
+}
+
 
 function handleSttEngineChange() {
   const sel = $('sttEngineSelect');
@@ -2334,8 +2466,12 @@ function startNativeSpeech(SR) {
     };
 
     recognition.onend = () => {
-      if (isListening) {
-        try { recognition.start(); } catch {}
+      if (isListening && !window.isSystemSuspended) {
+        setTimeout(() => {
+          if (isListening && !window.isSystemSuspended) {
+            try { recognition.start(); } catch {}
+          }
+        }, 1000);
       }
     };
 
@@ -2380,6 +2516,7 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
 
     if (sysStream && sysStream.getAudioTracks().length > 0) {
       systemStream = sysStream;
+      bindTrackLifecycle(sysStream, 'gemini-sys');
       audioOnlyStream = new MediaStream(sysStream.getAudioTracks());
 
       try {
@@ -2452,11 +2589,13 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
   try {
     const audioConstraints = getAudioConstraints();
     micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+    bindTrackLifecycle(micStream, 'gemini-mic');
     await loadAudioDevices();
     setActiveMicLabel(getTrackLabel(micStream));
   } catch(err) {
     try {
       micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      bindTrackLifecycle(micStream, 'gemini-mic');
       await loadAudioDevices();
       setActiveMicLabel(getTrackLabel(micStream));
     } catch(fallbackErr) {
@@ -2483,18 +2622,55 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
 
   const geminiWsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
 
+  function scheduleGeminiMicReconnect(customDelay = null) {
+    if (!isListening || window.isSystemSuspended || isPracticeMode) return;
+    if (micReconnectTimer) clearTimeout(micReconnectTimer);
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      window.addEventListener('online', () => { if (isListening && !window.isSystemSuspended) scheduleGeminiMicReconnect(500); }, { once: true });
+      return;
+    }
+    const delay = customDelay !== null ? customDelay : Math.min(20000, 1500 * Math.pow(1.5, micReconnectAttempts) + Math.random() * 500);
+    micReconnectAttempts++;
+    console.log(`[Gemini STT] Scheduling mic reconnect attempt #${micReconnectAttempts} in ${Math.round(delay)}ms`);
+    micReconnectTimer = setTimeout(async () => {
+      if (!isListening || window.isSystemSuspended) return;
+      await ensureLiveMicStream();
+      connectGeminiMicSocket();
+    }, delay);
+  }
+
+  function scheduleGeminiSysReconnect(customDelay = null) {
+    if (!isListening || window.isSystemSuspended) return;
+    if (sysReconnectTimer) clearTimeout(sysReconnectTimer);
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      window.addEventListener('online', () => { if (isListening && !window.isSystemSuspended) scheduleGeminiSysReconnect(500); }, { once: true });
+      return;
+    }
+    const delay = customDelay !== null ? customDelay : Math.min(20000, 1500 * Math.pow(1.5, sysReconnectAttempts) + Math.random() * 500);
+    sysReconnectAttempts++;
+    console.log(`[Gemini STT] Scheduling sys reconnect attempt #${sysReconnectAttempts} in ${Math.round(delay)}ms`);
+    sysReconnectTimer = setTimeout(() => {
+      if (!isListening || window.isSystemSuspended) return;
+      connectGeminiSysSocket();
+    }, delay);
+  }
+
   // SOCKET: SYSTEM AUDIO (Interviewer)
   function connectGeminiSysSocket() {
     const treatMicAsInterviewer = isPracticeMode || !sysStream || !audioOnlyStream;
     const streamToUse = treatMicAsInterviewer ? micStream : audioOnlyStream;
-    if (!isListening || !streamToUse) return;
+    if (!isListening || !streamToUse || window.isSystemSuspended) return;
 
     try {
+      if (geminiSysSocket) {
+        try { geminiSysSocket.onclose = null; geminiSysSocket.onerror = null; geminiSysSocket.close(); } catch (_) {}
+      }
       geminiSysSetupDone = false;
       geminiSysSocket = new WebSocket(geminiWsUrl);
 
       geminiSysSocket.onopen = () => {
         logDebug('✅ Gemini 3.5 Transcribe Live (System) WebSocket OPENED!');
+        sysReconnectAttempts = 0;
         const setupMsg = {
           setup: {
             model: modelName,
@@ -2619,8 +2795,8 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
         if (!geminiSysSetupDone) {
           setStatus(`⚠ Gemini Live closed before setup (code ${e.code || 'none'}) — check the model ID and Google key.`);
         }
-        if (isListening && (isPracticeMode ? micStream : (audioOnlyStream || sysStream))) {
-          setTimeout(connectGeminiSysSocket, 1500);
+        if (isListening && !window.isSystemSuspended && (isPracticeMode ? micStream : (audioOnlyStream || sysStream))) {
+          scheduleGeminiSysReconnect();
         }
       };
     } catch (err) {
@@ -2631,12 +2807,16 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
 
   // SOCKET: CANDIDATE MIC (When not in practice mode)
   function connectGeminiMicSocket() {
-    if (!isListening || !micStream || isPracticeMode) return;
+    if (!isListening || !micStream || isPracticeMode || window.isSystemSuspended) return;
     try {
+      if (geminiSocket) {
+        try { geminiSocket.onclose = null; geminiSocket.onerror = null; geminiSocket.close(); } catch (_) {}
+      }
       geminiSetupDone = false;
       geminiSocket = new WebSocket(geminiWsUrl);
 
       geminiSocket.onopen = () => {
+        micReconnectAttempts = 0;
         const setupMsg = {
           setup: {
             model: modelName,
@@ -2720,11 +2900,20 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
       };
 
       geminiSocket.onclose = () => {
-        if (isListening && micStream && !isPracticeMode) setTimeout(connectGeminiMicSocket, 1500);
+        if (isListening && !window.isSystemSuspended && !isPracticeMode) {
+          scheduleGeminiMicReconnect();
+        }
       };
     } catch(err) {}
   }
 
+  window.activeMicReconnectScheduler = scheduleGeminiMicReconnect;
+  window.activeSysReconnectScheduler = scheduleGeminiSysReconnect;
+  window.activeGeminiReconnect = () => {
+    connectGeminiSysSocket();
+    if (!isPracticeMode) connectGeminiMicSocket();
+  };
+  startAudioWatchdog();
   connectGeminiSysSocket();
   if (!isPracticeMode) {
     connectGeminiMicSocket();
@@ -2762,6 +2951,7 @@ async function startDeepgramMic(apiKey) {
 
     if (sysStream && sysStream.getAudioTracks().length > 0) {
         systemStream = sysStream;
+        bindTrackLifecycle(sysStream, 'system');
         // create a separate audio‑only stream for MediaRecorder (avoids video‑track issues)
         audioOnlyStream = new MediaStream(sysStream.getAudioTracks());
         
@@ -2839,12 +3029,14 @@ async function startDeepgramMic(apiKey) {
   // 2. RAW CANDIDATE MIC
   try {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioConstraints(), video: false });
+    bindTrackLifecycle(micStream, 'mic');
     logDebug('✅ Microphone captured');
     await loadAudioDevices(); // Refresh list now that we definitely have permission
     setActiveMicLabel(getTrackLabel(micStream));
   } catch(err) {
     try {
       micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      bindTrackLifecycle(micStream, 'mic');
       await loadAudioDevices(); // Refresh list now that we definitely have permission
       setActiveMicLabel(getTrackLabel(micStream));
     } catch(fallbackErr) {
@@ -2883,27 +3075,89 @@ async function startDeepgramMic(apiKey) {
     try { if (dgSysSocket && dgSysSocket.readyState === WebSocket.OPEN) dgSysSocket.send(JSON.stringify({ type: 'KeepAlive' })); } catch {}
   }, 4000);
 
+  function scheduleMicReconnect(customDelay = null) {
+    if (!isListening || window.isSystemSuspended) return;
+    if (micReconnectTimer) clearTimeout(micReconnectTimer);
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      console.log('[Deepgram STT] Network offline. Waiting for "online" event before reconnecting mic...');
+      window.addEventListener('online', () => {
+        if (isListening && !window.isSystemSuspended) scheduleMicReconnect(500);
+      }, { once: true });
+      return;
+    }
+
+    const delay = customDelay !== null ? customDelay : Math.min(20000, 1500 * Math.pow(1.5, micReconnectAttempts) + Math.random() * 500);
+    micReconnectAttempts++;
+    console.log(`[Deepgram STT] Scheduling mic reconnect attempt #${micReconnectAttempts} in ${Math.round(delay)}ms`);
+
+    micReconnectTimer = setTimeout(async () => {
+      if (!isListening || window.isSystemSuspended) return;
+      const liveMic = await ensureLiveMicStream();
+      if (!liveMic) {
+        scheduleMicReconnect();
+        return;
+      }
+      connectMicSocket();
+    }, delay);
+  }
+
+  function scheduleSysReconnect(customDelay = null) {
+    if (!isListening || window.isSystemSuspended || !systemStream) return;
+    if (sysReconnectTimer) clearTimeout(sysReconnectTimer);
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      window.addEventListener('online', () => {
+        if (isListening && !window.isSystemSuspended) scheduleSysReconnect(500);
+      }, { once: true });
+      return;
+    }
+
+    const delay = customDelay !== null ? customDelay : Math.min(20000, 1500 * Math.pow(1.5, sysReconnectAttempts) + Math.random() * 500);
+    sysReconnectAttempts++;
+    console.log(`[Deepgram STT] Scheduling sys reconnect attempt #${sysReconnectAttempts} in ${Math.round(delay)}ms`);
+
+    sysReconnectTimer = setTimeout(() => {
+      if (!isListening || window.isSystemSuspended || !systemStream) return;
+      connectSysSocket();
+    }, delay);
+  }
+
   // SOCKET 1: CANDIDATE MIC (Raw Stream)
   function connectMicSocket() {
-    if (!isListening || !micStream) return;
+    if (!isListening || window.isSystemSuspended) return;
+    if (!isStreamAlive(micStream)) {
+      console.warn('[Deepgram STT] connectMicSocket: micStream tracks ended, scheduling reacquisition');
+      scheduleMicReconnect();
+      return;
+    }
     try {
+      if (dgSocket) {
+        try { dgSocket.onopen = null; dgSocket.onmessage = null; dgSocket.onerror = null; dgSocket.onclose = null; dgSocket.close(); } catch (_) {}
+      }
       dgSocket = new WebSocket(wsUrl, ['token', apiKey]);
       dgSocket.onopen = () => {
         logDebug('✅ Deepgram WebSocket (Mic) OPENED!');
+        micReconnectAttempts = 0;
         try {
           if (mediaRecorder) { try { mediaRecorder.stop(); } catch{} }
           mediaRecorder = new MediaRecorder(micStream, { mimeType });
           mediaRecorder.ondataavailable = e => { 
-            if (e.data.size > 0 && dgSocket?.readyState === WebSocket.OPEN) dgSocket.send(e.data); 
+            if (e.data.size > 0 && dgSocket?.readyState === WebSocket.OPEN) {
+              window.lastSpeechOrActivityTime = Date.now();
+              dgSocket.send(e.data); 
+            }
           };
           mediaRecorder.start(250);
         } catch(mrErr) {
           logDebug('❌ Mic recorder failed: ' + mrErr.message);
           showMicError('Mic recorder failed: ' + mrErr.message);
+          scheduleSelfHealingRestart('media-recorder-start-failed');
         }
       };
 
       dgSocket.onmessage = (msg) => {
+        window.lastSpeechOrActivityTime = Date.now();
         try {
           const data = JSON.parse(msg.data);
           if (data.type === 'Metadata') return;
@@ -2989,30 +3243,40 @@ async function startDeepgramMic(apiKey) {
       };      
       dgSocket.onerror = (err) => {
         logDebug('❌ Deepgram mic socket error');
-        showMicError('Deepgram mic socket error. Check the Deepgram API key and internet connection.');
       };
       dgSocket.onclose = (e) => {
-        logDebug(`⚠ Deepgram mic socket closed (${e.code || 'no-code'}). Reconnecting if mic is still on...`);
-        if (isListening) setTimeout(connectMicSocket, 1500);
+        logDebug(`⚠ Deepgram mic socket closed (${e.code || 'no-code'}). Reconnecting with backoff...`);
+        if (isListening && !window.isSystemSuspended) {
+          scheduleMicReconnect();
+        }
       };
     } catch(err) {
       logDebug('❌ Deepgram mic socket failed: ' + err.message);
-      showMicError('Deepgram mic socket failed: ' + err.message);
+      if (isListening && !window.isSystemSuspended) {
+        scheduleMicReconnect();
+      }
     }
   }
 
   // SOCKET 2: SYSTEM AUDIO (Raw Stream)
   function connectSysSocket() {
-    if (!isListening || !systemStream) return;
+    if (!isListening || !systemStream || window.isSystemSuspended) return;
     try {
+      if (dgSysSocket) {
+        try { dgSysSocket.onopen = null; dgSysSocket.onmessage = null; dgSysSocket.onerror = null; dgSysSocket.onclose = null; dgSysSocket.close(); } catch (_) {}
+      }
       dgSysSocket = new WebSocket(wsUrl, ['token', apiKey]);
       dgSysSocket.onopen = () => {
         logDebug('✅ Deepgram WebSocket (System) OPENED!');
+        sysReconnectAttempts = 0;
         try {
           if (sysMediaRecorder) { try { sysMediaRecorder.stop(); } catch{} }
           sysMediaRecorder = new MediaRecorder(audioOnlyStream, { mimeType });
           sysMediaRecorder.ondataavailable = e => { 
-            if (e.data.size > 0 && dgSysSocket?.readyState === WebSocket.OPEN) dgSysSocket.send(e.data); 
+            if (e.data.size > 0 && dgSysSocket?.readyState === WebSocket.OPEN) {
+              window.lastSpeechOrActivityTime = Date.now();
+              dgSysSocket.send(e.data); 
+            }
           };
           sysMediaRecorder.start(250);
         } catch (sysErr) {}
@@ -3020,6 +3284,7 @@ async function startDeepgramMic(apiKey) {
 
       dgSysSocket.onmessage = (msg) => {
         try {
+          window.lastSpeechOrActivityTime = Date.now();
           const data = JSON.parse(msg.data);
           if (data.type === 'Metadata') return;
           const transcript = data?.channel?.alternatives?.[0]?.transcript?.trim();
@@ -3050,10 +3315,25 @@ async function startDeepgramMic(apiKey) {
           }
         } catch(e) {}
       };
-      dgSysSocket.onclose = () => { if (isListening && systemStream) setTimeout(connectSysSocket, 1500); };
-    } catch(err) {}
+      dgSysSocket.onclose = () => {
+        if (isListening && systemStream && !window.isSystemSuspended) {
+          scheduleSysReconnect();
+        }
+      };
+    } catch(err) {
+      if (isListening && systemStream && !window.isSystemSuspended) {
+        scheduleSysReconnect();
+      }
+    }
   }
 
+  window.activeMicReconnectScheduler = scheduleMicReconnect;
+  window.activeSysReconnectScheduler = scheduleSysReconnect;
+  window.activeDeepgramReconnect = () => {
+    connectMicSocket();
+    if (systemStream) connectSysSocket();
+  };
+  startAudioWatchdog();
   connectMicSocket();
   connectSysSocket();
 }
@@ -3091,6 +3371,8 @@ async function startWhisperMic() {
 
   try {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioConstraints(), video: false });
+    bindTrackLifecycle(micStream, 'whisper-mic');
+    startAudioWatchdog();
   } catch(err) {
     showMicError(`Mic access denied: ${err.message}`);
     return;
@@ -3111,41 +3393,54 @@ async function startWhisperMic() {
   setStatus(`Microphone active (${currentProvider} transcription)`);
 
   function recordChunk() {
-    if (!isListening) return;
+    if (!isListening || window.isSystemSuspended) return;
+    if (!isStreamAlive(micStream)) {
+      console.warn('[Whisper] Mic stream ended or missing, re-acquiring hardware...');
+      ensureLiveMicStream().then(s => {
+        if (s && isListening && !window.isSystemSuspended) setTimeout(recordChunk, 1000);
+      });
+      return;
+    }
     audioChunks = [];
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
-    mediaRecorder = new MediaRecorder(micStream, { mimeType });
+    try {
+      mediaRecorder = new MediaRecorder(micStream, { mimeType });
 
-    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
-    mediaRecorder.onstop = async () => {
-      const blob = new Blob(audioChunks, { type: mimeType });
-      $('micSub').textContent = `Transcribing… (${Math.round(blob.size/1024)}KB)`;
-      setStatus('Transcribing audio chunk…');
-      const text = await transcribeChunk(blob);
-      if (text && text.trim().length > 5) {
-        finalTranscript += ' ' + text.trim();
-        finalTranscript = finalTranscript.trim();
-        $('transcript').innerHTML = `<span class="t-final">${esc(finalTranscript)}</span>`;
-        $('manualQ').value = finalTranscript;
-        setStatus('Transcript updated — auto-asking in 1.5s…');
-        clearTimeout(silenceTimer);
-        if (!isLongQuestionMode) {
-          silenceTimer = setTimeout(() => {
-            if (finalTranscript.length > 5) {
-              submitOrQueue(finalTranscript);
-              finalTranscript = '';
-            }
-          }, 1500);
+      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(audioChunks, { type: mimeType });
+        $('micSub').textContent = `Transcribing… (${Math.round(blob.size/1024)}KB)`;
+        setStatus('Transcribing audio chunk…');
+        const text = await transcribeChunk(blob);
+        if (text && text.trim().length > 5) {
+          window.lastSpeechOrActivityTime = Date.now();
+          finalTranscript += ' ' + text.trim();
+          finalTranscript = finalTranscript.trim();
+          $('transcript').innerHTML = `<span class="t-final">${esc(finalTranscript)}</span>`;
+          $('manualQ').value = finalTranscript;
+          setStatus('Transcript updated — auto-asking in 1.5s…');
+          clearTimeout(silenceTimer);
+          if (!isLongQuestionMode) {
+            silenceTimer = setTimeout(() => {
+              if (finalTranscript.length > 5) {
+                submitOrQueue(finalTranscript);
+                finalTranscript = '';
+              }
+            }, 1500);
+          }
+        } else {
+          setStatus('No speech detected in chunk — listening…');
         }
-      } else {
-        setStatus('No speech detected in chunk — listening…');
-      }
-      $('micSub').textContent = `Recording in 2.5s chunks — transcribing via ${currentProvider}`;
-      if (isListening) recordChunk();
-    };
+        $('micSub').textContent = `Recording in 2.5s chunks — transcribing via ${currentProvider}`;
+        if (isListening && !window.isSystemSuspended) recordChunk();
+      };
 
-    mediaRecorder.start();
-    setTimeout(() => { if (mediaRecorder.state === 'recording') mediaRecorder.stop(); }, CHUNK_MS);
+      mediaRecorder.start();
+      setTimeout(() => { if (mediaRecorder.state === 'recording') mediaRecorder.stop(); }, CHUNK_MS);
+    } catch (mrErr) {
+      console.error('[Whisper] recordChunk failed:', mrErr.message);
+      if (isListening && !window.isSystemSuspended) setTimeout(recordChunk, 2000);
+    }
   }
 
   recordChunk();
@@ -3153,6 +3448,17 @@ async function startWhisperMic() {
 
 function stopMic() {
   isListening = false;
+  if (micReconnectTimer) { clearTimeout(micReconnectTimer); micReconnectTimer = null; }
+  if (sysReconnectTimer) { clearTimeout(sysReconnectTimer); sysReconnectTimer = null; }
+  if (selfHealTimer) { clearTimeout(selfHealTimer); selfHealTimer = null; }
+  if (audioWatchdogTimer) { clearInterval(audioWatchdogTimer); audioWatchdogTimer = null; }
+  if (dgHeartbeatTimer) { clearInterval(dgHeartbeatTimer); dgHeartbeatTimer = null; }
+  micReconnectAttempts = 0;
+  sysReconnectAttempts = 0;
+  window.activeMicReconnectScheduler = null;
+  window.activeSysReconnectScheduler = null;
+  window.activeDeepgramReconnect = null;
+  window.activeGeminiReconnect = null;
   try { recognition && recognition.stop(); } catch {}
   try { mediaRecorder && mediaRecorder.state === 'recording' && mediaRecorder.stop(); } catch {}
   try { systemMediaRecorder && systemMediaRecorder.state === 'recording' && systemMediaRecorder.stop(); } catch {}
@@ -4441,6 +4747,46 @@ ipcRenderer.on('end-session-remote', () => {
 ipcRenderer.on('toggle-mic-remote', async () => {
   await toggleMic();
   ipcRenderer.send('mic-state-changed', isListening);
+});
+
+ipcRenderer.on('system-power-suspend', () => {
+  console.log('[PowerLifecycle] System entering standby/sleep');
+  window.isSystemSuspended = true;
+  if (dgHeartbeatTimer) { clearInterval(dgHeartbeatTimer); dgHeartbeatTimer = null; }
+  if (micReconnectTimer) { clearTimeout(micReconnectTimer); micReconnectTimer = null; }
+  if (sysReconnectTimer) { clearTimeout(sysReconnectTimer); sysReconnectTimer = null; }
+  if (selfHealTimer) { clearTimeout(selfHealTimer); selfHealTimer = null; }
+  cancelPendingTimers();
+  try { if (dgSocket && dgSocket.readyState === WebSocket.OPEN) dgSocket.close(1000, 'system-sleep'); } catch (_) {}
+  try { if (dgSysSocket && dgSysSocket.readyState === WebSocket.OPEN) dgSysSocket.close(1000, 'system-sleep'); } catch (_) {}
+  try { if (geminiSocket && geminiSocket.readyState === WebSocket.OPEN) geminiSocket.close(1000, 'system-sleep'); } catch (_) {}
+  try { if (geminiSysSocket && geminiSysSocket.readyState === WebSocket.OPEN) geminiSysSocket.close(1000, 'system-sleep'); } catch (_) {}
+});
+
+ipcRenderer.on('system-power-resume', () => {
+  console.log('[PowerLifecycle] System resumed from standby/sleep');
+  window.isSystemSuspended = false;
+  if (!isListening) return;
+
+  setStatus('⚡ System resumed — reconnecting audio devices…');
+  setTimeout(async () => {
+    if (!isListening || window.isSystemSuspended) return;
+    try {
+      if (sysAnalyser && sysAnalyser.context && sysAnalyser.context.state === 'suspended') {
+        await sysAnalyser.context.resume();
+        console.log('[PowerLifecycle] sysAnalyser AudioContext resumed');
+      }
+      if (geminiAudioCtx && geminiAudioCtx.state === 'suspended') {
+        await geminiAudioCtx.resume();
+      }
+      if (geminiSysAudioCtx && geminiSysAudioCtx.state === 'suspended') {
+        await geminiSysAudioCtx.resume();
+      }
+    } catch (e) {
+      console.warn('[PowerLifecycle] AudioContext resume error:', e);
+    }
+    scheduleSelfHealingRestart('system-power-resume');
+  }, 1200);
 });
 
 ipcRenderer.on('toggle-autosend-remote', () => {

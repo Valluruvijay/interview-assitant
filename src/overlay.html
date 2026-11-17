@@ -977,6 +977,16 @@ ipcRenderer.on('mic-state-changed', (_, isListening) => {
   $('st').textContent = isListening ? 'Listening…' : 'Mic off';
 });
 
+ipcRenderer.on('system-power-suspend', () => {
+  const stEl = $('st');
+  if (stEl) stEl.textContent = 'System sleeping…';
+});
+
+ipcRenderer.on('system-power-resume', () => {
+  const stEl = $('st');
+  if (stEl) stEl.textContent = 'Resumed · Listening…';
+});
+
 let pendingCommitted = '';
 let autoSendOff = false;
 
