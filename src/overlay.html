@@ -625,6 +625,7 @@ strong { font-weight:600; color:var(--accent); }
       <button class="capture-btn" id="multiCaptureBtn" onclick="captureMultiPart()" title="Add screenshot part (scroll and capture multiple parts)">📸+ Part</button>
       <button class="capture-btn" id="solveMultiBtn" onclick="solveMultiParts()" style="display:none; background: #16a34a; border-color: #22c55e; color: #fff; font-weight: bold;" title="Send all captured parts to AI">⚡ Solve (0)</button>
       <button class="capture-btn" id="clearMultiBtn" onclick="clearMultiParts()" style="display:none; color: #ef4444; padding: 2px 6px;" title="Discard queued screenshot parts">✕</button>
+      <button class="capture-btn" id="overlayAutoSendBtn" onclick="toggleAutoSendOverlay()" title="Toggle Auto-send: When OFF, questions are held on screen until you press Alt+A to send or Alt+X to reject" style="color:#fbbf24; border-color:rgba(251,191,36,0.4);">⏸ Auto: OFF</button>
       <button class="capture-btn" id="overlayFollowUpBtn" onclick="toggleFollowUpOverlay()">🔁 Follow-up: OFF</button>
       <button class="capture-btn" id="shieldToggleBtn" onclick="toggleShieldFromOverlay()" title="Anti-Tab Switch Shield (Alt+T): Prevents exam websites from detecting clicks on overlay as tab changes" style="border-color: rgba(34, 197, 94, 0.4); color: #22c55e;">🛡️ Shield: ON</button>
       <button class="end-btn" onclick="endSession()">❌ End</button>
@@ -977,8 +978,25 @@ ipcRenderer.on('mic-state-changed', (_, isListening) => {
 
 let pendingCommitted = '';
 let autoSendOff = false;
+
+function updateAutoSendOverlayButton(enabled) {
+  const btn = $('overlayAutoSendBtn');
+  if (btn) {
+    btn.textContent = enabled ? '⚡ Auto: ON' : '⏸ Auto: OFF';
+    btn.style.color = enabled ? '#4ade80' : '#fbbf24';
+    btn.style.borderColor = enabled ? 'rgba(74,222,128,0.4)' : 'rgba(251,191,36,0.4)';
+  }
+}
+
+function toggleAutoSendOverlay() {
+  ipcRenderer.send('toggle-autosend-from-overlay');
+}
+
 ipcRenderer.invoke('get-settings').then(s => {
-  if (s && s.autoSend !== undefined) autoSendOff = s.autoSend === false;
+  if (s && s.autoSend !== undefined) {
+    autoSendOff = s.autoSend === false;
+    updateAutoSendOverlayButton(!autoSendOff);
+  }
 }).catch(() => {});
 
 function renderPendingPanel(state, text) {
@@ -1027,6 +1045,7 @@ function discardPendingQuestion() {
 
 ipcRenderer.on('auto-send-state', (_, enabled) => {
   autoSendOff = !enabled;
+  updateAutoSendOverlayButton(enabled);
   if (!autoSendOff) {
     pendingCommitted = '';
     renderPendingPanel(null);

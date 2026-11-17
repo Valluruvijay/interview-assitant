@@ -781,6 +781,9 @@ ipcMain.on('long-q-state-changed', (_, state) => safeSend(overlayWin, 'long-q-st
 ipcMain.on('toggle-followup-from-overlay', () => safeSend(controlWin, 'toggle-followup-remote'));
 ipcMain.on('followup-state-changed', (_, state) => safeSend(overlayWin, 'followup-state-changed', state));
 
+// Auto-send Toggle from Overlay
+ipcMain.on('toggle-autosend-from-overlay', () => safeSend(controlWin, 'toggle-autosend-remote'));
+
 // Desktop Screenshot Capture
 ipcMain.handle('get-desktop-audio-source', async () => {
   try {

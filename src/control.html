@@ -2199,8 +2199,7 @@ function updateAutoSendHint() {
 }
 
 function submitOrQueue(question, imageBase64 = null) {
-  const isPractice = document.getElementById('practiceModeToggle')?.checked;
-  if (!isPractice && window.autoSendEnabled === false) {
+  if (window.autoSendEnabled === false) {
     queuePendingQuestion(question);
     return;
   }
@@ -2216,6 +2215,7 @@ function cancelPendingTimers() {
 function queuePendingQuestion(question) {
   const q = String(question || '').trim();
   if (!q) return;
+  cancelPendingTimers();
   window.pendingQuestion = window.pendingQuestion ? window.pendingQuestion + '\n' + q : q;
   finalTranscript = '';
   window.currentInterviewerText = '';
@@ -4441,6 +4441,14 @@ ipcRenderer.on('end-session-remote', () => {
 ipcRenderer.on('toggle-mic-remote', async () => {
   await toggleMic();
   ipcRenderer.send('mic-state-changed', isListening);
+});
+
+ipcRenderer.on('toggle-autosend-remote', () => {
+  const el = $('autoSendToggle');
+  if (el) {
+    el.checked = !el.checked;
+    handleAutoSendToggle(el.checked);
+  }
 });
 
 ipcRenderer.on('toggle-long-q-remote', () => {
