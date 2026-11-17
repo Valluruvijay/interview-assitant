@@ -127,6 +127,7 @@ html, body {
 .chat-container {
   flex:1;
   overflow-y:auto;
+  overflow-anchor:none;
   padding:10px 10px 6px;
   display:flex;
   flex-direction:column;
@@ -148,11 +149,11 @@ kbd { font-size:10px; background:rgba(255,255,255,0.07); border:1px solid rgba(2
   display:flex;
   flex-direction:column;
   gap:8px;
-  animation: fadeSlideIn 0.3s ease-out;
+  animation: fadeIn 0.15s ease-out;
 }
-@keyframes fadeSlideIn {
-  from { opacity:0; transform:translateY(8px); }
-  to { opacity:1; transform:translateY(0); }
+@keyframes fadeIn {
+  from { opacity:0; }
+  to { opacity:1; }
 }
 
 .bubble {
@@ -476,9 +477,9 @@ strong { font-weight:600; color:var(--accent); }
   background:linear-gradient(180deg, rgba(239,159,39,0.16), rgba(0,0,0,0.42));
   border-top:1px solid rgba(239,159,39,0.45);
   box-shadow:inset 3px 0 0 #fbbf24;
-  animation:pendingIn 0.18s ease-out;
+  animation:pendingIn 0.15s ease-out;
 }
-@keyframes pendingIn { from{opacity:0; transform:translateY(5px)} to{opacity:1; transform:none} }
+@keyframes pendingIn { from{opacity:0;} to{opacity:1;} }
 .pending-head { display:flex; align-items:center; gap:6px; margin-bottom:5px; }
 .pending-dot { width:7px; height:7px; border-radius:50%; background:#fbbf24; animation:p 1.2s infinite; }
 .pending-title { font-size:10px; font-weight:700; letter-spacing:0.5px; color:#fbbf24; text-transform:uppercase; }
@@ -1029,12 +1030,10 @@ function appendRejectedQuestion(text) {
 function sendPendingQuestion() {
   userRequestedAnswerScroll = true;
   ipcRenderer.send('send-pending-question');
-  setTimeout(() => scrollToCurrentQuestion(), 60);
 }
 
 ipcRenderer.on('user-triggered-answer', () => {
   userRequestedAnswerScroll = true;
-  setTimeout(() => scrollToCurrentQuestion(), 60);
 });
 
 function discardPendingQuestion() {
@@ -1093,17 +1092,22 @@ function scrollToDirectBottom(showToast = true) {
   if (showToast) showOverlayToast('⬇ Scrolled to bottom');
 }
 
-function scrollToCurrentQuestion(showToast = false) {
+function scrollToCurrentQuestion(smooth = false, showToast = false) {
+  const c = $('chatContainer');
+  if (!c) return;
   if (currentPair) {
-    try {
-      currentPair.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } catch (_) {
-      const c = $('chatContainer');
-      if (c) c.scrollTop = currentPair.offsetTop;
+    const targetTop = currentPair.offsetTop - c.offsetTop;
+    if (smooth) {
+      c.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+    } else {
+      c.scrollTop = Math.max(0, targetTop);
     }
   } else {
-    const c = $('chatContainer');
-    if (c) c.scrollTo({ top: 0, behavior: 'smooth' });
+    if (smooth) {
+      c.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      c.scrollTop = 0;
+    }
   }
   if (showToast) showOverlayToast('⬆ Current question');
 }
@@ -1427,9 +1431,8 @@ ipcRenderer.on('show-question', (_, qData) => {
   currentPair.appendChild(aBubble);
   $('chatContainer').appendChild(currentPair);
 
-  // Keep view smoothly focused on the question & top talking points
-  scrollToCurrentQuestion(false);
-  setTimeout(() => scrollToCurrentQuestion(false), 50);
+  // Keep view focused on the question & top talking points
+  scrollToCurrentQuestion(false, false);
 
   $('st').textContent = 'Downloading… 0.0s';
   $('orb').style.background = '#FAC775';
@@ -1542,7 +1545,6 @@ function sendFollowUpFromPill(btn) {
   userRequestedAnswerScroll = true;
   ipcRenderer.send('ask-followup', cleanQ);
   showOverlayToast('⚡ Asking: ' + (cleanQ.length > 25 ? cleanQ.slice(0, 25) + '...' : cleanQ));
-  setTimeout(() => scrollToCurrentQuestion(), 60);
 }
 
 ipcRenderer.on('answer-done', () => {
@@ -1689,7 +1691,6 @@ function sendFollowUp() {
     $('st').textContent = 'Generating answer…';
     // Hand keyboard focus back to whatever app was in front
     ipcRenderer.send('overlay-release-focus');
-    setTimeout(() => scrollToCurrentQuestion(), 60);
   }
 }
 
