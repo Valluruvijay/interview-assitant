@@ -258,6 +258,10 @@ function createOverlay() {
     }
   });
 
+  overlayWin.webContents.on('console-message', (event, level, message) => {
+    if (level >= 2) console.log('[Overlay Console Error]:', message);
+  });
+
   overlayWin.on('moved', () => {
     const [x, y] = overlayWin.getPosition();
     saveSettings({ ...loadSettings(), overlayX: x, overlayY: y });
@@ -393,6 +397,10 @@ function createControl() {
     if (controlWin && !controlWin.isDestroyed()) {
       controlWin.loadFile(path.join(__dirname, 'control.html'));
     }
+  });
+
+  controlWin.webContents.on('console-message', (event, level, message) => {
+    if (level >= 2) console.log('[Control Console Error]:', message);
   });
 
   controlWin.webContents.on('unresponsive', () => {
