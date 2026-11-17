@@ -578,10 +578,16 @@ strong { font-weight:600; color:var(--accent); }
 
   <div class="chat-container" id="chatContainer">
     <div class="idle" id="idle">
-      <span class="idle-txt">Waiting for questions…</span>
-      <kbd>Alt+H</kbd><span class="idle-txt">hide</span>
-      <kbd>Alt+C</kbd><span class="idle-txt">ask</span>
-      <kbd>Alt+A</kbd><span class="idle-txt">answer</span>
+      <div style="display:flex; flex-direction:column; align-items:center; gap:8px; padding:14px 6px;">
+        <span class="idle-txt" style="font-weight:600; color:var(--text); font-size:12px;">🎙️ Listening for questions…</span>
+        <span class="idle-txt" style="font-size:11px; color:var(--text-dim); text-align:center;">Speak into your microphone or type a question below:</span>
+        <button class="capture-btn" onclick="testLiveAiQuestion()" style="background:var(--accent); color:#fff; border-color:var(--accent); font-weight:700; font-size:11px; padding:5px 14px; margin-top:2px; cursor:pointer;">⚡ Test AI Answer (Instant)</button>
+        <div style="display:flex; gap:6px; margin-top:4px;">
+          <kbd>Alt+H</kbd><span class="idle-txt">hide</span>
+          <kbd>Alt+C</kbd><span class="idle-txt">ask</span>
+          <kbd>Alt+A</kbd><span class="idle-txt">answer</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -608,12 +614,13 @@ strong { font-weight:600; color:var(--accent); }
   </div>
 
   <div class="followup-bar" style="display:flex; padding: 6px 10px; background: rgba(0,0,0,0.4); border-top: 1px solid var(--border); gap: 6px; -webkit-app-region:no-drag;">
-    <input type="text" id="followUpInput" placeholder="Type a follow-up question..." style="flex:1; background: var(--bg); color: var(--text); border: 1px solid rgba(29,158,117,0.3); border-radius: 4px; padding: 4px 8px; font-size: 11px; outline: none; font-family:'Segoe UI',sans-serif;" onkeydown="if(event.key==='Enter') sendFollowUp()">
+    <input type="text" id="followUpInput" placeholder="Type any interview question here (Press Enter to get AI answer)…" style="flex:1; background: var(--bg); color: var(--text); border: 1px solid rgba(29,158,117,0.3); border-radius: 4px; padding: 4px 8px; font-size: 11px; outline: none; font-family:'Segoe UI',sans-serif;" onkeydown="if(event.key==='Enter') sendFollowUp()">
     <button onclick="sendFollowUp()" style="background: var(--accent); color: #fff; border: none; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px; font-family:'Segoe UI',sans-serif; transition: background 0.15s;" onmouseover="this.style.background='var(--accent2)'" onmouseout="this.style.background='var(--accent)'">Ask</button>
   </div>
   <div class="bottom-bar">
     <span class="hint-text" id="qCount">0 Q&amp;As</span>
     <div class="hint-keys">
+      <button class="capture-btn" id="overlayTestAiBtn" onclick="testLiveAiQuestion()" title="Send a test question to verify AI answer immediately" style="background:rgba(29,158,117,0.2); color:#4ade80; border-color:rgba(29,158,117,0.5); font-weight:700;">⚡ Test AI</button>
       <button class="capture-btn" id="overlayCaptureBtn" onclick="captureScreen()" title="Single-shot capture (instant answer)">📸 Screen</button>
       <button class="capture-btn" id="multiCaptureBtn" onclick="captureMultiPart()" title="Add screenshot part (scroll and capture multiple parts)">📸+ Part</button>
       <button class="capture-btn" id="solveMultiBtn" onclick="solveMultiParts()" style="display:none; background: #16a34a; border-color: #22c55e; color: #fff; font-weight: bold;" title="Send all captured parts to AI">⚡ Solve (0)</button>
@@ -633,6 +640,13 @@ const { ipcRenderer } = require('electron');
 const $ = id => document.getElementById(id);
 
 // ── TOAST & LIVE MODEL SWITCHER ─────────────────────────
+function testLiveAiQuestion() {
+  const testQ = "What is polymorphism in Java? Explain with a 2-sentence summary and a real-world code example.";
+  userRequestedAnswerScroll = true;
+  ipcRenderer.send('ask-followup', testQ);
+  showOverlayToast('⚡ Asking test question…');
+}
+
 function showOverlayToast(text) {
   const st = $('st');
   if (st) {

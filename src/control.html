@@ -1834,7 +1834,7 @@ let dgSysSocket = null;
 let sysMediaRecorder = null; 
 let dgSystemSocket = null;
 let dgHeartbeatTimer = null;
-let sttEngine = 'gemini';
+let sttEngine = 'deepgram';
 let geminiSocket = null;
 let geminiSysSocket = null;
 let geminiAudioCtx = null;
@@ -2134,7 +2134,7 @@ function isValidQuestion(text) {
   
   // Normalize string: lowercase, letters and spaces only
   const normalized = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!normalized || normalized.length < 7) return false;
+  if (!normalized || normalized.length < 4) return false;
 
   const words = normalized.split(' ');
   
@@ -2162,8 +2162,8 @@ function isValidQuestion(text) {
   ]);
   
   const substantiveWords = words.filter(w => !chatterWords.has(w));
-  if (substantiveWords.length < 2) {
-    // If fewer than 2 real topic words, it's small talk / greeting
+  if (substantiveWords.length < 1) {
+    // If no real topic words, it's small talk / greeting
     return false;
   }
 
@@ -2485,7 +2485,8 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
 
   // SOCKET: SYSTEM AUDIO (Interviewer)
   function connectGeminiSysSocket() {
-    const streamToUse = isPracticeMode ? micStream : audioOnlyStream;
+    const treatMicAsInterviewer = isPracticeMode || !sysStream || !audioOnlyStream;
+    const streamToUse = treatMicAsInterviewer ? micStream : audioOnlyStream;
     if (!isListening || !streamToUse) return;
 
     try {
@@ -2565,7 +2566,8 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
           }
 
           const sc = data?.serverContent;
-          const inputText = (sc?.interimInputTranscription?.text || sc?.inputTranscription?.text || '').trim();
+          const modelParts = sc?.modelTurn?.parts?.map(p => p.text).filter(Boolean).join(' ') || '';
+          const inputText = (sc?.interimInputTranscription?.text || sc?.inputTranscription?.text || modelParts || '').trim();
 
           // triggerAnswer() / pending rejection clears finalTranscript once consumed
           if (!finalTranscript && (geminiSysCommitted || geminiSysTurnText)) {
@@ -2698,7 +2700,8 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
             return;
           }
           const sc = data?.serverContent;
-          const inputText = (sc?.interimInputTranscription?.text || sc?.inputTranscription?.text || '').trim();
+          const modelParts = sc?.modelTurn?.parts?.map(p => p.text).filter(Boolean).join(' ') || '';
+          const inputText = (sc?.interimInputTranscription?.text || sc?.inputTranscription?.text || modelParts || '').trim();
           if (inputText) {
             geminiMicTurnText = inputText;
             candidateTranscript = (candidateFinalTranscript + ' ' + geminiMicTurnText).trim();
@@ -2927,8 +2930,9 @@ async function startDeepgramMic(apiKey) {
             }
 
             if (!isCrossTalk) {
-              if (isPracticeMode) {
-                // In Practice Mode, treat Mic as Interviewer
+              const treatMicAsInterviewer = isPracticeMode || !sysStream;
+              if (treatMicAsInterviewer) {
+                // In Practice Mode OR when no system meeting audio is running, treat Mic as Interviewer
                 let fullText = '';
                 if (data.is_final) { 
                   finalTranscript += (finalTranscript ? ' ' : '') + transcript; 
