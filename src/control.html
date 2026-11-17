@@ -4026,6 +4026,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
     let cleanAnswerStreamed = 0;
     let cachedTokensFound = 0;
     let streamError = null;
+    let lastCtrlLiveUpdate = 0;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -4133,17 +4134,21 @@ async function askQuestion(qOverride, imageBase64 = null) {
               const newDelta = currentVisibleAnswer.slice(cleanAnswerStreamed);
               cleanAnswerStreamed = currentVisibleAnswer.length;
               ipcRenderer.send('answer-chunk', newDelta);
-              const liveAns = $('ctrlLiveAnswer');
-              if (liveAns) {
-                liveAns.textContent = currentVisibleAnswer.length > 300 ? '…' + currentVisibleAnswer.slice(-300) : currentVisibleAnswer;
+              const nowTime = Date.now();
+              if (nowTime - lastCtrlLiveUpdate > 75) {
+                lastCtrlLiveUpdate = nowTime;
+                const liveAns = $('ctrlLiveAnswer');
+                if (liveAns) {
+                  liveAns.textContent = currentVisibleAnswer.length > 300 ? '…' + currentVisibleAnswer.slice(-300) : currentVisibleAnswer;
+                }
+                const manualLive = $('manualLiveAnswer');
+                const manualBadge = $('manualOutputBadge');
+                if (manualLive) {
+                  manualLive.textContent = currentVisibleAnswer;
+                  manualLive.scrollTop = manualLive.scrollHeight;
+                }
+                if (manualBadge) manualBadge.textContent = '⚡ Streaming…';
               }
-              const manualLive = $('manualLiveAnswer');
-              const manualBadge = $('manualOutputBadge');
-              if (manualLive) {
-                manualLive.textContent = currentVisibleAnswer;
-                manualLive.scrollTop = manualLive.scrollHeight;
-              }
-              if (manualBadge) manualBadge.textContent = '⚡ Streaming…';
             }
           }
         } catch {}

@@ -593,8 +593,8 @@ strong { font-weight:600; color:var(--accent); }
 
   <!-- Floating Scroll Navigation (Up to Question / Down to Latest) -->
   <div class="scroll-nav" id="scrollNav">
-    <button class="scroll-nav-btn" onclick="scrollToCurrentQuestion()" title="Go to Current Question (Top of Answer) [Alt+Up]">⬆ Q</button>
-    <button class="scroll-nav-btn" onclick="scrollToDirectBottom()" title="Go directly to Down (Latest Answer) [Alt+Down]">⬇</button>
+    <button class="scroll-nav-btn" onclick="scrollToCurrentQuestion(true)" title="Go to Current Question (Top of Answer) [Alt+Up]">⬆ Q</button>
+    <button class="scroll-nav-btn" onclick="scrollToDirectBottom(true)" title="Go directly to Down (Latest Answer) [Alt+Down]">⬇</button>
   </div>
 
   <div id="pendingBar" class="pending-panel" style="display:none;">
@@ -1056,30 +1056,37 @@ ipcRenderer.on('pending-question-cleared', () => {
   renderPendingPanel(null);
 });
 
-function scrollToBottom() {
+function scrollToBottom(smooth = false) {
   const c = $('chatContainer');
-  if (c) c.scrollTop = c.scrollHeight;
-  if (currentPair) {
-    try { currentPair.scrollIntoView({ behavior: 'smooth', block: 'end' }); } catch (_) {}
+  if (!c) return;
+  if (smooth) {
+    c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' });
+  } else {
+    c.scrollTop = c.scrollHeight;
   }
 }
 
-function scrollToDirectBottom() {
+function scrollToDirectBottom(showToast = true) {
   const c = $('chatContainer');
   if (c) {
     c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' });
   }
-  showOverlayToast('⬇ Scrolled to bottom');
+  if (showToast) showOverlayToast('⬇ Scrolled to bottom');
 }
 
-function scrollToCurrentQuestion() {
+function scrollToCurrentQuestion(showToast = false) {
   if (currentPair) {
-    currentPair.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    try {
+      currentPair.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (_) {
+      const c = $('chatContainer');
+      if (c) c.scrollTop = currentPair.offsetTop;
+    }
   } else {
     const c = $('chatContainer');
     if (c) c.scrollTo({ top: 0, behavior: 'smooth' });
   }
-  showOverlayToast('⬆ Current question');
+  if (showToast) showOverlayToast('⬆ Current question');
 }
 
 function escapeHtml(str) {
@@ -1367,8 +1374,7 @@ ipcRenderer.on('show-question', (_, qData) => {
   aLabel.title = 'Click to jump to this question & talking points';
   aLabel.onclick = (e) => {
     e.stopPropagation();
-    qBubble.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    showOverlayToast('⬆ Current question');
+    scrollToCurrentQuestion(true);
   };
 
   // Clicking answer label or bubble border/header jumps to question
@@ -1377,16 +1383,14 @@ ipcRenderer.on('show-question', (_, qData) => {
     if (sel && sel.toString().length > 0) return;
     if (e.target.closest('button') || e.target.closest('pre') || e.target.closest('code') || e.target.closest('a') || e.target.closest('.followup-item')) return;
     if (e.target === aBubble || e.target.closest('.bubble-label')) {
-      qBubble.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      showOverlayToast('⬆ Current question');
+      scrollToCurrentQuestion(true);
     }
   });
 
   // Double-clicking answer bubble also jumps to question
   aBubble.ondblclick = (e) => {
     if (e.target.closest('pre') || e.target.closest('code') || e.target.closest('button')) return;
-    qBubble.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    showOverlayToast('⬆ Current question');
+    scrollToCurrentQuestion(true);
   };
 
   currentAnswerContent = document.createElement('div');
@@ -1403,21 +1407,13 @@ ipcRenderer.on('show-question', (_, qData) => {
   currentPair.appendChild(qBubble);
   currentPair.appendChild(aBubble);
   $('chatContainer').appendChild(currentPair);
-  scrollToBottom();
+
+  // Keep view smoothly focused on the question & top talking points
+  scrollToCurrentQuestion(false);
+  setTimeout(() => scrollToCurrentQuestion(false), 50);
 
   $('st').textContent = 'Downloading… 0.0s';
   $('orb').style.background = '#FAC775';
-
-  if (userRequestedAnswerScroll) {
-    userRequestedAnswerScroll = false;
-    setTimeout(() => {
-      if (currentPair) {
-        currentPair.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      } else {
-        scrollToCurrentQuestion();
-      }
-    }, 40);
-  }
 });
 
 let isReasoningActive = false;
@@ -1441,6 +1437,8 @@ ipcRenderer.on('reasoning-status', (_, data) => {
 });
 
 let pendingChunkUpdate = false;
+let lastChunkRenderTime = 0;
+const RENDER_THROTTLE_MS = 60;
 
 ipcRenderer.on('answer-chunk', (_, chunk) => {
   if (isReasoningActive) {
@@ -1466,6 +1464,7 @@ ipcRenderer.on('answer-chunk', (_, chunk) => {
       aBubble.appendChild(currentAnswerContent);
       currentPair.appendChild(aBubble);
       container.appendChild(currentPair);
+      scrollToCurrentQuestion(false);
     } else {
       return;
     }
@@ -1489,19 +1488,29 @@ ipcRenderer.on('answer-chunk', (_, chunk) => {
     }
   }
 
+  // Throttle markdown rendering to keep renderer process 100% responsive without lagging
+  const now = Date.now();
   if (!pendingChunkUpdate) {
+    const timeSinceLast = now - lastChunkRenderTime;
+    const delay = timeSinceLast >= RENDER_THROTTLE_MS ? 0 : (RENDER_THROTTLE_MS - timeSinceLast);
     pendingChunkUpdate = true;
-    requestAnimationFrame(() => {
-      if (currentAnswerContent) {
-        currentAnswerContent.innerHTML = renderMarkdown(currentA);
-        if (cursor) cursor.remove();
-        cursor = document.createElement('span');
-        cursor.className = 'cursor';
-        currentAnswerContent.appendChild(cursor);
-      }
-      scrollToBottom();
-      pendingChunkUpdate = false;
-    });
+    setTimeout(() => {
+      requestAnimationFrame(() => {
+        if (currentAnswerContent) {
+          try {
+            currentAnswerContent.innerHTML = renderMarkdown(currentA);
+            if (cursor) cursor.remove();
+            cursor = document.createElement('span');
+            cursor.className = 'cursor';
+            currentAnswerContent.appendChild(cursor);
+          } catch (e) {
+            console.error('Render error:', e);
+          }
+        }
+        lastChunkRenderTime = Date.now();
+        pendingChunkUpdate = false;
+      });
+    }, delay);
   }
 });
 
@@ -1546,11 +1555,16 @@ ipcRenderer.on('answer-done', () => {
   }
 
   if (currentAnswerContent) {
-    currentAnswerContent.innerHTML = renderMarkdown(currentA);
+    try {
+      currentAnswerContent.innerHTML = renderMarkdown(currentA);
+    } catch (e) {
+      console.error('Final render error:', e);
+    }
   }
   if (cursor) { cursor.remove(); cursor = null; }
-  scrollToBottom();
-  setTimeout(scrollToBottom, 60);
+
+  // Preserves user reading position at the top (Quick Talking Points).
+  // Does NOT call scrollToBottom() so the answer stays right where the candidate is reading!
   $('st').textContent = 'Ready';
   $('orb').style.background = '#4CAF50';
   qaCount++;
