@@ -1045,6 +1045,9 @@ ipcRenderer.on('pending-question-cleared', () => {
 function scrollToBottom() {
   const c = $('chatContainer');
   if (c) c.scrollTop = c.scrollHeight;
+  if (currentPair) {
+    try { currentPair.scrollIntoView({ behavior: 'smooth', block: 'end' }); } catch (_) {}
+  }
 }
 
 function scrollToDirectBottom() {
@@ -1386,6 +1389,7 @@ ipcRenderer.on('show-question', (_, qData) => {
   currentPair.appendChild(qBubble);
   currentPair.appendChild(aBubble);
   $('chatContainer').appendChild(currentPair);
+  scrollToBottom();
 
   $('st').textContent = 'Downloading… 0.0s';
   $('orb').style.background = '#FAC775';
@@ -1474,11 +1478,14 @@ ipcRenderer.on('answer-chunk', (_, chunk) => {
   if (!pendingChunkUpdate) {
     pendingChunkUpdate = true;
     requestAnimationFrame(() => {
-      currentAnswerContent.innerHTML = renderMarkdown(currentA);
-      if (cursor) cursor.remove();
-      cursor = document.createElement('span');
-      cursor.className = 'cursor';
-      currentAnswerContent.appendChild(cursor);
+      if (currentAnswerContent) {
+        currentAnswerContent.innerHTML = renderMarkdown(currentA);
+        if (cursor) cursor.remove();
+        cursor = document.createElement('span');
+        cursor.className = 'cursor';
+        currentAnswerContent.appendChild(cursor);
+      }
+      scrollToBottom();
       pendingChunkUpdate = false;
     });
   }
@@ -1528,6 +1535,8 @@ ipcRenderer.on('answer-done', () => {
     currentAnswerContent.innerHTML = renderMarkdown(currentA);
   }
   if (cursor) { cursor.remove(); cursor = null; }
+  scrollToBottom();
+  setTimeout(scrollToBottom, 60);
   $('st').textContent = 'Ready';
   $('orb').style.background = '#4CAF50';
   qaCount++;

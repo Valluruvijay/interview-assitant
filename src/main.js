@@ -52,7 +52,12 @@ let currentOpacity = 0.92;
 let overlayVisible = true;
 let antiTabSwitchShield = true; // Solution C: Strict non-activating overlay
 
-const userDataPath = app.getPath('userData');
+const appDataDir = app.getPath('appData');
+const userDataPath = path.join(appDataDir, 'interviewai-pro');
+try {
+  if (!fs.existsSync(userDataPath)) fs.mkdirSync(userDataPath, { recursive: true });
+  app.setPath('userData', userDataPath);
+} catch (_) {}
 const settingsFile = path.join(userDataPath, 'settings.json');
 const sessionsFile = path.join(userDataPath, 'sessions.json');
 
@@ -246,6 +251,13 @@ function createOverlay() {
   overlayWin.setOpacity(currentOpacity);
   overlayWin.loadFile(path.join(__dirname, 'overlay.html'));
 
+  overlayWin.webContents.on('render-process-gone', (event, details) => {
+    console.error('[OverlayWin Crash Guard] Renderer process gone:', details.reason);
+    if (overlayWin && !overlayWin.isDestroyed()) {
+      overlayWin.loadFile(path.join(__dirname, 'overlay.html'));
+    }
+  });
+
   overlayWin.on('moved', () => {
     const [x, y] = overlayWin.getPosition();
     saveSettings({ ...loadSettings(), overlayX: x, overlayY: y });
@@ -375,6 +387,17 @@ function createControl() {
   controlWin.webContents.session.setPermissionCheckHandler(() => true);
 
   controlWin.loadFile(path.join(__dirname, 'control.html'));
+
+  controlWin.webContents.on('render-process-gone', (event, details) => {
+    console.error('[ControlWin Crash Guard] Renderer process gone:', details.reason);
+    if (controlWin && !controlWin.isDestroyed()) {
+      controlWin.loadFile(path.join(__dirname, 'control.html'));
+    }
+  });
+
+  controlWin.webContents.on('unresponsive', () => {
+    console.warn('[ControlWin] Window unresponsive.');
+  });
 
   controlWin.once('ready-to-show', () => {
     if (!controlWin || controlWin.isDestroyed()) return;
