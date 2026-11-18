@@ -3816,7 +3816,9 @@ function cancelChatGPTPromptPreview() {
 async function askQuestion(qOverride, imageBase64 = null) {
   const qStartTime = Date.now();
   let question = qOverride || $('manualQ').value.trim();
-  question = question.replace(/^\[FOLLOW-UP QUESTION\]:?\s*/i, '').trim();
+  question = question.replace(/^\[FOLLOW-UP QUESTION\]:?\s*/i, '');
+  question = question.replace(/^Prompt:\s*["']?/i, '').replace(/["']$/i, '').trim();
+  question = question.replace(/^Question:\s*["']?/i, '').replace(/["']$/i, '').trim();
   if (!question && !imageBase64) return;
   if (isGenerating) {
     if (imageBase64) {
@@ -3841,9 +3843,9 @@ async function askQuestion(qOverride, imageBase64 = null) {
   let watchdogFired = false;
   const watchdogTimer = setTimeout(() => {
     watchdogFired = true;
-    console.warn('[Watchdog] AI request exceeded 35s limit. Aborting...');
+    console.warn('[Watchdog] AI request exceeded 60s limit. Aborting...');
     try { currentCtrl.abort(); } catch(e){}
-  }, 35000);
+  }, 60000);
 
   let effectiveProvider = currentProvider;
   let cfg = PROVIDERS[effectiveProvider];
@@ -4013,8 +4015,8 @@ async function askQuestion(qOverride, imageBase64 = null) {
     const historyMessages = [];
     const memorySource = currentSessionQA;
     const exchanges = memorySource.filter(x => x && x.question && x.answer);
-    const MAX_HISTORY_CHARS = 14000;
-    let keepFrom = Math.max(0, exchanges.length - 8);
+    const MAX_HISTORY_CHARS = 10000;
+    let keepFrom = Math.max(0, exchanges.length - 6);
     let historyChars = 0;
     for (let i = keepFrom; i < exchanges.length; i++) {
       historyChars += (exchanges[i].question || '').length + (exchanges[i].answer || '').length;
@@ -4024,8 +4026,22 @@ async function askQuestion(qOverride, imageBase64 = null) {
       keepFrom++;
     }
     for (const x of exchanges.slice(keepFrom)) {
-      historyMessages.push({ role: 'user', content: x.question });
-      historyMessages.push({ role: 'assistant', content: x.answer });
+      let cleanAns = (x.answer || '')
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/^<think>[\s\S]*/i, '')
+        .trim();
+      // Skip error placeholders or internal reasoning spills from previous questions
+      if (cleanAns.startsWith('⚠️') || cleanAns.startsWith('The user wants a scenario-based') || cleanAns.startsWith('Let me think')) {
+        continue;
+      }
+      // Compact prior answers so they never cause prompt bloat or massive token billing
+      if (cleanAns.length > 2000) {
+        cleanAns = cleanAns.slice(0, 1800) + '\n... [Prior response truncated for brevity]';
+      }
+      if (cleanAns) {
+        historyMessages.push({ role: 'user', content: x.question });
+        historyMessages.push({ role: 'assistant', content: cleanAns });
+      }
     }
 
     if (imageBase64) {
@@ -4235,7 +4251,8 @@ async function askQuestion(qOverride, imageBase64 = null) {
             delete requestBody.temperature;
           }
         } else if (effectiveProvider === 'sarvam') {
-          requestBody.max_tokens = maxTokensBudget;
+          // Provide 8192 tokens so reasoning tokens never crowd out the markdown table and answer
+          requestBody.max_tokens = 8192;
           if (currentModel.includes('deepseek')) {
             if (activeEffort === 'none') {
               requestBody.reasoning_effort = 'none';
@@ -4477,9 +4494,19 @@ async function askQuestion(qOverride, imageBase64 = null) {
     
     if (streamError) throw new Error(streamError);
 
-    fullAnswer = (cleanAnswerStreamed > 0 ? rawAccumulatedAnswer.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() : rawAccumulatedAnswer.trim());
-    if (!fullAnswer && rawAccumulatedReasoning) {
-      fullAnswer = rawAccumulatedReasoning.trim();
+    let cleanOutput = rawAccumulatedAnswer.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^<think>[\s\S]*/i, '').trim();
+    if (cleanOutput) {
+      fullAnswer = cleanOutput;
+      if (cleanAnswerStreamed === 0) {
+        ipcRenderer.send('answer-chunk', fullAnswer);
+      } else if (fullAnswer.length > cleanAnswerStreamed) {
+        ipcRenderer.send('answer-chunk', fullAnswer.slice(cleanAnswerStreamed));
+      }
+    } else {
+      // Model produced only reasoning without generating any visible answer:
+      const notice = `⚠️ **Reasoning Budget Exhausted**: The model consumed its token budget on internal reasoning before writing the answer.\n\n👉 **Recommended Fix**: Select **Sarvam DeepSeek 4.1 (Interactive)** and turn **Reasoning Effort** to **Off (Fast Mode)** in the model selector for instant answers in under 5 seconds.`;
+      fullAnswer = notice;
+      ipcRenderer.send('answer-chunk', notice);
     }
 
     clearInterval(controlTimerInterval);
@@ -4854,6 +4881,7 @@ async function wsPayload(msg) {
 ipcRenderer.on('ask-followup', (_, text) => {
   if (text && text.trim()) {
     console.log('[Follow-up Bar] Received follow-up question:', text);
+    if ($('manualQ')) $('manualQ').value = text.trim();
     if (activeAbortController) {
       try { activeAbortController.abort(); } catch(e){}
       activeAbortController = null;

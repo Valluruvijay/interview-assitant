@@ -1445,6 +1445,7 @@ ipcRenderer.on('show-question', (_, qData) => {
   currentQuestionStartTime = qStart;
   currentTTFT = null;
   isReasoningActive = false;
+  pendingChunkUpdate = false;
 
   currentQ = q; currentA = '';
   const idleEl = $('idle');
@@ -1721,6 +1722,7 @@ ipcRenderer.on('answer-done', () => {
     $('st').textContent = `Ready (⏱️ ${totalSec}s)`;
   }
 
+  pendingChunkUpdate = false;
   if (currentAnswerContent) {
     try {
       currentAnswerContent.innerHTML = renderMarkdown(currentA);
