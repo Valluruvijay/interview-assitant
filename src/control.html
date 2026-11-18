@@ -4302,12 +4302,22 @@ async function askQuestion(qOverride, imageBase64 = null) {
       } else {
         headers['x-api-key'] = effectiveKey;
         headers['anthropic-version'] = '2023-06-01';
+        headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
+        if (!cachedSessionSystemPrompt) {
+          cachedSessionSystemPrompt = buildChatGPTSystemPrompt('', true);
+        }
         body = JSON.stringify({
           model: currentModel,
-          max_tokens: 1000,
+          max_tokens: 4096,
           temperature: 0.25,
           stream: true,
-          system: buildSystemPrompt(question),
+          system: [
+            {
+              type: 'text',
+              text: cachedSessionSystemPrompt,
+              cache_control: { type: 'ephemeral' }
+            }
+          ],
           messages: historyMessages
         });
       }
