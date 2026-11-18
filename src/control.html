@@ -703,6 +703,7 @@ let activeAbortController = null;
 let usageCount = 0;
 let currentSessionQA = [];
 let sessionStart = null;
+let cachedSessionSystemPrompt = null;
 let testMode = false;
 let currentProvider = 'chatgpt'; // 'cerebras', 'chatgpt', 'gemini', 'groq', 'deepseek'
 let resumeFiles = [];
@@ -843,6 +844,7 @@ function toggleTech(tech) {
   }
   chatgptPromptApproved = false;
   chatgptPromptOverride = '';
+  cachedSessionSystemPrompt = null;
   $('techSearch').value = '';
   renderTechGrid();
   renderSelectedTechs();
@@ -858,6 +860,7 @@ function addCustomTech() {
     selectedTechs.add(val);
     chatgptPromptApproved = false;
     chatgptPromptOverride = '';
+    cachedSessionSystemPrompt = null;
     $('techSearch').value = '';
     renderTechGrid();
     renderSelectedTechs();
@@ -937,6 +940,7 @@ function prepareInterview() {
   const { selRole, customRole } = refreshSetupStateFromInputs();
   chatgptPromptApproved = false;
   chatgptPromptOverride = '';
+  cachedSessionSystemPrompt = null;
   
   // Save to persistent settings
   saveS({
@@ -4012,19 +4016,12 @@ async function askQuestion(qOverride, imageBase64 = null) {
 
     // ── Conversation memory: replay recent exchanges like a chat thread ──
     // The model sees the thread and decides whether the new question depends on it.
+    // ── Conversation memory: replay exactly the last 2 Q&A exchanges ──
     const historyMessages = [];
     const memorySource = currentSessionQA;
     const exchanges = memorySource.filter(x => x && x.question && x.answer);
-    const MAX_HISTORY_CHARS = 10000;
-    let keepFrom = Math.max(0, exchanges.length - 6);
-    let historyChars = 0;
-    for (let i = keepFrom; i < exchanges.length; i++) {
-      historyChars += (exchanges[i].question || '').length + (exchanges[i].answer || '').length;
-    }
-    while (keepFrom < exchanges.length - 1 && historyChars > MAX_HISTORY_CHARS) {
-      historyChars -= (exchanges[keepFrom].question || '').length + (exchanges[keepFrom].answer || '').length;
-      keepFrom++;
-    }
+    // Keep exactly the last 2 questions and answers for follow-up context with minimal token overhead
+    let keepFrom = Math.max(0, exchanges.length - 2);
     for (const x of exchanges.slice(keepFrom)) {
       let cleanAns = (x.answer || '')
         .replace(/<think>[\s\S]*?<\/think>/gi, '')
@@ -4034,9 +4031,12 @@ async function askQuestion(qOverride, imageBase64 = null) {
       if (cleanAns.startsWith('⚠️') || cleanAns.startsWith('The user wants a scenario-based') || cleanAns.startsWith('Let me think')) {
         continue;
       }
-      // Compact prior answers so they never cause prompt bloat or massive token billing
-      if (cleanAns.length > 2000) {
-        cleanAns = cleanAns.slice(0, 1800) + '\n... [Prior response truncated for brevity]';
+      // Compact prior answers: extract Quick Talking Points if present (captures core thesis & mechanism without tables/code bloat)
+      if (cleanAns.includes('### 🗣️ Quick Talking Points') && cleanAns.includes('---')) {
+        const parts = cleanAns.split('---');
+        cleanAns = parts[0].trim();
+      } else if (cleanAns.length > 700) {
+        cleanAns = cleanAns.slice(0, 650) + '\n... [Prior response summarized]';
       }
       if (cleanAns) {
         historyMessages.push({ role: 'user', content: x.question });
@@ -4121,10 +4121,13 @@ async function askQuestion(qOverride, imageBase64 = null) {
           });
         }
 
-        // ── ⚡ STATIC SYSTEM PROMPT (100% KV CACHE PREFIX PRESERVATION) ──
-        // Keep the system prompt 100% identical on every call so OpenAI (GPT-6 Luna)
-        // and DeepSeek (4.1 Flash) automatic Prompt Caching hits 100% of the time!
-        let sysContent = buildChatGPTSystemPrompt('', true);
+        // ── ⚡ STATIC SESSION SYSTEM PROMPT (100% KV CACHE PREFIX PRESERVATION) ──
+        // Keep the system prompt 100% identical and cached in memory across the entire session
+        // so OpenAI, DeepSeek, and Sarvam automatic Prompt/KV Caching hits 100% of the time!
+        if (!cachedSessionSystemPrompt) {
+          cachedSessionSystemPrompt = buildChatGPTSystemPrompt('', true);
+        }
+        let sysContent = cachedSessionSystemPrompt;
 
         // Dynamic question-specific reference material is attached to the user turn,
         // so it NEVER changes or invalidates the cached system prompt prefix!
@@ -4602,6 +4605,7 @@ function clearAll() {
   sessionStart = null;
   currentSessionId = null;
   currentSessionQA = [];
+  cachedSessionSystemPrompt = null;
   setStatus('Cleared');
 }
 
