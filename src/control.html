@@ -155,6 +155,18 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
 .prompt-body{padding:14px 16px;display:flex;flex-direction:column;gap:10px;overflow:hidden;}
 .prompt-body textarea{min-height:360px;max-height:52vh;resize:vertical;font-family:Consolas,monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;}
 .prompt-actions{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;}
+
+/* Markdown Comparison Tables */
+.md-table-wrap { width:100%; overflow-x:auto; margin:8px 0; border-radius:6px; border:1px solid var(--border2); background:rgba(0,0,0,0.3); }
+.md-table { width:100%; min-width:260px; border-collapse:collapse; font-size:11px; line-height:1.4; color:var(--text); }
+.md-table thead { background:rgba(29,158,117,0.18); border-bottom:1.5px solid rgba(29,158,117,0.4); }
+.md-table th { padding:6px 9px; font-weight:700; color:#10b981; text-align:left; white-space:nowrap; border-right:1px solid var(--border); }
+.md-table th:last-child { border-right:none; }
+.md-table td { padding:5px 9px; border-bottom:1px solid var(--border); border-right:1px solid var(--border); vertical-align:top; }
+.md-table td:last-child { border-right:none; }
+.md-table tbody tr:nth-child(even) { background:rgba(255,255,255,0.02); }
+.md-table tbody tr:hover { background:rgba(29,158,117,0.08); }
+.md-table strong { color:#38bdf8; }
 </style>
 </head>
 <body>
@@ -3584,7 +3596,7 @@ Format every response strictly with these three distinct sections so I can speak
 - Use Markdown bullet points, numbered lists, code blocks, and architecture or execution-flow diagrams wherever appropriate.
 - Do not restrict responses to plain paragraphs or bullet points.
 - Choose the most suitable format for the technical question.
-- Do not force a table when a simple conversational explanation is sufficient.
+- **MANDATORY FOR COMPARISONS & DIFFERENCES**: Whenever the question asks for a comparison, difference, 'vs', trade-offs, advantages/disadvantages, pros & cons, or when to choose one feature over another (e.g. Apex vs Flow, Queueable vs Future vs Batch Apex, @wire vs Imperative Apex, REST vs SOAP), you MUST include a clean Markdown comparison table inside the 📋 Full Explanation & Implementation section. For other non-comparison questions, do not force a table if a simple conversational explanation is sufficient.
 
 ---
 
@@ -3610,6 +3622,7 @@ Format every response strictly with these three distinct sections so I can speak
 
 - Straightforward question: 3 to 4 sentences.
 - Technical question: 4 to 6 sentences with a little explanation.
+- Difference / Comparison / "vs" question: High-level contrast in Quick Talking Points, followed by a mandatory structured Markdown comparison table in Full Explanation.
 - Scenario-based question: the approach, the implementation, and why I chose it.
 - Architecture question: the design, the execution flow, and the important considerations.
 - Follow-up question: explain the specific point being asked without repeating the previous answer.
@@ -3699,7 +3712,7 @@ Format every response strictly with these three distinct sections so I can speak
 - Use Markdown bullet points, numbered lists, code blocks, and architecture or execution-flow diagrams wherever appropriate.
 - Do not restrict responses to plain paragraphs or bullet points.
 - Choose the most suitable format for the technical question.
-- Do not force a table when a simple conversational explanation is sufficient.
+- **MANDATORY FOR COMPARISONS & DIFFERENCES**: Whenever the question asks for a comparison, difference, 'vs', trade-offs, advantages/disadvantages, pros & cons, or when to choose one feature over another (e.g. Apex vs Flow, Queueable vs Future vs Batch Apex, @wire vs Imperative Apex, REST vs SOAP), you MUST include a clean Markdown comparison table inside the 📋 Full Explanation & Implementation section. For other non-comparison questions, do not force a table if a simple conversational explanation is sufficient.
 
 ---
 
@@ -4485,13 +4498,13 @@ async function askQuestion(qOverride, imageBase64 = null) {
           <span style="color:var(--accent);font-weight:600;font-size:12px;">✓ Answer Complete (${totalSec}s)</span>
           <span style="font-size:10px;color:var(--text3);">${fullAnswer.length} chars</span>
         </div>
-        <div style="color:var(--text);font-size:12px;line-height:1.45;white-space:pre-wrap;max-height:220px;overflow-y:auto;padding:8px;background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:5px;user-select:text;">${esc(fullAnswer)}</div>
+        <div style="color:var(--text);font-size:12px;line-height:1.45;max-height:350px;overflow-y:auto;padding:8px;background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:5px;user-select:text;">${renderControlMarkdown(fullAnswer)}</div>
       `;
     }
     const manualLive = $('manualLiveAnswer');
     const manualBadge = $('manualOutputBadge');
     if (manualLive) {
-      manualLive.textContent = fullAnswer;
+      manualLive.innerHTML = renderControlMarkdown(fullAnswer);
     }
     if (manualBadge) {
       manualBadge.innerHTML = `<span style="color:var(--accent);font-weight:600;">✓ Complete (${totalSec}s)</span>`;
@@ -4708,6 +4721,117 @@ ipcRenderer.on('opacity-changed', (_, pct) => {
 
 function setStatus(msg) { $('statusMsg').textContent = msg; }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function renderMarkdownTable(rows) {
+  if (!rows || rows.length === 0) return '';
+  const isDelimiter = (str) => /^\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?$/.test(str.trim());
+
+  let headerCells = [];
+  let alignments = [];
+  let dataStartIndex = 1;
+
+  if (rows.length > 1 && isDelimiter(rows[1])) {
+    dataStartIndex = 2;
+    const rawCols = rows[1].trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+    alignments = rawCols.map(col => {
+      const c = col.trim();
+      if (c.startsWith(':') && c.endsWith(':')) return 'center';
+      if (c.endsWith(':')) return 'right';
+      return 'left';
+    });
+  }
+
+  const rawHeaders = rows[0].trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+  headerCells = rawHeaders.map(c => c.trim());
+
+  let html = '<div class="md-table-wrap"><table class="md-table"><thead><tr>';
+  headerCells.forEach((cell, idx) => {
+    const align = alignments[idx] ? ` style="text-align:${alignments[idx]}"` : '';
+    html += `<th${align}>${cell}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  for (let r = dataStartIndex; r < rows.length; r++) {
+    const rowStr = rows[r].trim();
+    if (!rowStr) continue;
+    if (isDelimiter(rowStr)) continue;
+    const rawCells = rowStr.replace(/^\|/, '').replace(/\|$/, '').split('|');
+    html += '<tr>';
+    rawCells.forEach((cell, idx) => {
+      const align = alignments[idx] ? ` style="text-align:${alignments[idx]}"` : '';
+      html += `<td${align}>${cell.trim()}</td>`;
+    });
+    html += '</tr>';
+  }
+  html += '</tbody></table></div>';
+  return html;
+}
+
+function renderControlMarkdown(md) {
+  if (!md) return '';
+  const codeBlocks = [];
+  let processed = md.replace(/```([\s\S]*?)```/g, (match, code) => {
+    codeBlocks.push('<pre style="background:rgba(0,0,0,0.4);padding:6px;border-radius:4px;overflow-x:auto;"><code>' + esc(code) + '</code></pre>');
+    return '%%CODEBLOCK' + (codeBlocks.length - 1) + '%%';
+  });
+  processed = esc(processed);
+  codeBlocks.forEach((block, i) => {
+    processed = processed.replace('%%CODEBLOCK' + i + '%%', block);
+  });
+
+  const lines = processed.split('\n');
+  let html = '';
+  let inList = false;
+  let tableBuffer = [];
+
+  function flushTable() {
+    if (tableBuffer.length > 0) {
+      html += renderMarkdownTable(tableBuffer);
+      tableBuffer = [];
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    line = line.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    line = line.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    line = line.replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px;">$1</code>');
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith('|') && trimmed.includes('|', 1)) {
+      if (inList) { html += '</ul>'; inList = false; }
+      tableBuffer.push(line);
+      continue;
+    } else {
+      flushTable();
+    }
+
+    if (trimmed.startsWith('### ') || trimmed.startsWith('## ') || trimmed === '---') {
+      if (inList) { html += '</ul>'; inList = false; }
+      if (trimmed === '---') {
+        html += '<hr style="border:none;border-top:1px solid var(--border);margin:6px 0;">';
+        continue;
+      }
+      const heading = trimmed.replace(/^###?\s+/, '');
+      html += '<div style="font-weight:700;color:var(--accent);margin:6px 0 2px;">' + heading + '</div>';
+    } else if (/^[-*•]\s/.test(trimmed)) {
+      if (!inList) { html += '<ul style="margin:3px 0;padding-left:16px;">'; inList = true; }
+      html += '<li style="margin:2px 0;">' + trimmed.replace(/^[-*•]\s+/, '') + '</li>';
+    } else if (trimmed.startsWith('<pre')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += line;
+    } else if (trimmed === '') {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="height:4px;"></div>';
+    } else {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += '<div style="margin:2px 0;">' + line + '</div>';
+    }
+  }
+  flushTable();
+  if (inList) html += '</ul>';
+  return html;
+}
 function logDebug(msg) {
   console.log(msg);
   const dbg = document.getElementById('massiveDebug');

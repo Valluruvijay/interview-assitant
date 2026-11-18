@@ -394,6 +394,67 @@ strong { font-weight:600; color:var(--accent); }
   color: #fff;
 }
 
+/* ── MARKDOWN COMPARISON TABLES ──────────────────────── */
+.md-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 8px 0;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  scrollbar-width: thin;
+}
+.md-table-wrap::-webkit-scrollbar {
+  height: 4px;
+}
+.md-table-wrap::-webkit-scrollbar-thumb {
+  background: rgba(29, 158, 117, 0.4);
+  border-radius: 2px;
+}
+.md-table {
+  width: 100%;
+  min-width: 260px;
+  border-collapse: collapse;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text, #f1f5f9);
+}
+.md-table thead {
+  background: rgba(29, 158, 117, 0.2);
+  border-bottom: 1.5px solid rgba(29, 158, 117, 0.5);
+}
+.md-table th {
+  padding: 6px 9px;
+  font-weight: 700;
+  color: #10b981;
+  text-align: left;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+}
+.md-table th:last-child {
+  border-right: none;
+}
+.md-table td {
+  padding: 5px 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: top;
+}
+.md-table td:last-child {
+  border-right: none;
+}
+.md-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.025);
+}
+.md-table tbody tr:hover {
+  background: rgba(29, 158, 117, 0.1);
+}
+.md-table strong {
+  color: #38bdf8;
+}
+
 /* ── SCROLL NAVIGATION (UP & DOWN BUTTONS) ───────────── */
 .scroll-nav {
   position: absolute;
@@ -1131,6 +1192,51 @@ function escapeHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function renderMarkdownTable(rows) {
+  if (!rows || rows.length === 0) return '';
+  const isDelimiter = (str) => /^\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?$/.test(str.trim());
+
+  let headerCells = [];
+  let alignments = [];
+  let dataStartIndex = 1;
+
+  if (rows.length > 1 && isDelimiter(rows[1])) {
+    dataStartIndex = 2;
+    const rawCols = rows[1].trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+    alignments = rawCols.map(col => {
+      const c = col.trim();
+      if (c.startsWith(':') && c.endsWith(':')) return 'center';
+      if (c.endsWith(':')) return 'right';
+      return 'left';
+    });
+  }
+
+  const rawHeaders = rows[0].trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+  headerCells = rawHeaders.map(c => c.trim());
+
+  let html = '<div class="md-table-wrap"><table class="md-table"><thead><tr>';
+  headerCells.forEach((cell, idx) => {
+    const align = alignments[idx] ? ` style="text-align:${alignments[idx]}"` : '';
+    html += `<th${align}>${cell}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  for (let r = dataStartIndex; r < rows.length; r++) {
+    const rowStr = rows[r].trim();
+    if (!rowStr) continue;
+    if (isDelimiter(rowStr)) continue;
+    const rawCells = rowStr.replace(/^\|/, '').replace(/\|$/, '').split('|');
+    html += '<tr>';
+    rawCells.forEach((cell, idx) => {
+      const align = alignments[idx] ? ` style="text-align:${alignments[idx]}"` : '';
+      html += `<td${align}>${cell.trim()}</td>`;
+    });
+    html += '</tr>';
+  }
+  html += '</tbody></table></div>';
+  return html;
+}
+
 function renderMarkdown(md) {
   if (!md) return '';
   
@@ -1150,6 +1256,14 @@ function renderMarkdown(md) {
   let html = '';
   let inList = false;
   let inCard = null; // 'teleprompter' | 'followup' | null
+  let tableBuffer = [];
+
+  function flushTable() {
+    if (tableBuffer.length > 0) {
+      html += renderMarkdownTable(tableBuffer);
+      tableBuffer = [];
+    }
+  }
   
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
@@ -1158,6 +1272,15 @@ function renderMarkdown(md) {
     line = line.replace(/`([^`]+)`/g, '<code>$1</code>');
     
     const trimmed = line.trim();
+
+    // Check if line is a table row (| col1 | col2 |)
+    if (trimmed.startsWith('|') && trimmed.includes('|', 1)) {
+      if (inList) { html += '</ul>'; inList = false; }
+      tableBuffer.push(line);
+      continue;
+    } else {
+      flushTable();
+    }
     
     if (trimmed.startsWith('### ') || trimmed.startsWith('## ') || trimmed === '---') {
       if (inList) { html += '</ul>'; inList = false; }
@@ -1214,6 +1337,7 @@ function renderMarkdown(md) {
       html += '<div style="margin:2px 0;">' + line + '</div>';
     }
   }
+  flushTable();
   if (inList) html += '</ul>';
   if (inCard) html += '</div>';
   
