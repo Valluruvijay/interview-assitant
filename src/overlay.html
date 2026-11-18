@@ -858,7 +858,7 @@ function changeOverlayOpacity(val) {
   ipcRenderer.send('set-opacity', op);
 }
 
-// Sync initial opacity from settings
+// Sync initial opacity & active model from settings
 ipcRenderer.invoke('get-settings').then(settings => {
   if (settings && settings.opacity !== undefined) {
     const pct = Math.round(settings.opacity * 100);
@@ -866,6 +866,14 @@ ipcRenderer.invoke('get-settings').then(settings => {
     const valLabel = $('overlayOpacityVal');
     if (slider) slider.value = pct;
     if (valLabel) valLabel.textContent = pct + '%';
+  }
+  if (settings && settings.provider) {
+    const prov = settings.provider;
+    const model = settings[prov + 'Model'] || '';
+    const targetVal = `${prov}:${model}`;
+    const match = OVERLAY_MODELS.find(m => m.value === targetVal)
+      || OVERLAY_MODELS.find(m => m.value.startsWith(prov + ':'));
+    if (match) setOverlayModel(match.value);
   }
 }).catch(() => {});
 

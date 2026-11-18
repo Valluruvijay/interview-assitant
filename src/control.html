@@ -1535,6 +1535,7 @@ async function mockAskQuestion(question) {
   renderSelectedTechs();
   updateUsage();
   loadAudioDevices();
+  ipcRenderer.send('sync-active-model', { provider: currentProvider, model: PROVIDERS[currentProvider].model });
 })();
 
 // ── SAVE HELPERS ──────────────────────────────────────────
