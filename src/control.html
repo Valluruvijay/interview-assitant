@@ -329,6 +329,7 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
           <option value="groq">Groq</option>
           <option value="chatgpt">ChatGPT (OpenAI)</option>
           <option value="deepseek">DeepSeek</option>
+          <option value="sarvam">Sarvam AI (India)</option>
         </select>
         <select id="aiModelSelect" style="flex:1;" onchange="saveAiModel()">
           <!-- Populated dynamically -->
@@ -758,6 +759,13 @@ const PROVIDERS = {
     hint: 'Get yours at platform.deepseek.com · Stored locally only.',
     apiBase: 'https://api.deepseek.com/v1',
     model: 'deepseek-flash',
+  },
+  sarvam: {
+    label: 'Sarvam AI Subscription Key',
+    placeholder: 'sarvam-api-key...',
+    hint: 'Get your key at sarvam.ai · Indian Sovereign AI & Token Factory.',
+    apiBase: 'https://api.sarvam.ai/v2',
+    model: 'sarvam-105b',
   }
 };
 
@@ -1005,7 +1013,7 @@ function handleAiProviderChange() {
   const provider = $('aiProviderSelect').value;
   chatgptPromptApproved = false;
   
-  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'cerebras'].includes(provider)) {
+  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'cerebras', 'sarvam'].includes(provider)) {
     $('editChatgptPromptBtn').style.display = 'block';
   } else {
     $('editChatgptPromptBtn').style.display = 'none';
@@ -1076,7 +1084,7 @@ function handleModelReasoningChange() {
   window.currentReasoningEffort = effort;
   saveS({ reasoningEffort: effort, lunaReasoningEffort: effort });
   updateModelTuningUI();
-  const provName = currentProvider === 'chatgpt' ? 'ChatGPT (GPT-6 Luna)' : (currentProvider.startsWith('gemini') ? 'Google Gemini' : 'DeepSeek');
+  const provName = currentProvider === 'chatgpt' ? 'ChatGPT (GPT-6 Luna)' : (currentProvider.startsWith('gemini') ? 'Google Gemini' : (currentProvider === 'sarvam' ? 'Sarvam AI' : 'DeepSeek'));
   setStatus(provName + ': ' + (effort === 'none' ? 'Option A (Custom Temp)' : 'Option B (Reasoning ' + effort.toUpperCase() + ')'));
 }
 
@@ -1262,6 +1270,20 @@ function populateAiModels(provider) {
     if (!models.map(m => m.id).includes(PROVIDERS.deepseek.model)) {
       PROVIDERS.deepseek.model = 'deepseek-flash';
     }
+  } else if (provider === 'sarvam') {
+    models = [
+      { id: 'sarvam-105b', label: 'Sarvam 105B (Flagship Indian Reasoning & Code)' },
+      { id: 'sarvam-105b-conversations', label: 'Sarvam 105B Conversations (Real-time Dialogue)' },
+      { id: 'glm5.3', label: 'Sarvam GLM 5.3 (High-Speed Reasoning)' },
+      { id: 'glm5.3-flash', label: 'Sarvam GLM 5.3 Flash (Ultra-Low Latency)' },
+      { id: 'deepseekv4.1-flash-1017', label: 'Sarvam DeepSeek 4.1 Flash (Token Factory)' },
+      { id: 'deepseekv4-pro', label: 'Sarvam DeepSeek 4 Pro (High Capacity)' },
+      { id: 'gemma4', label: 'Sarvam Gemma 4 (Token Factory)' },
+      { id: 'kimi-k3.1-pro', label: 'Sarvam Kimi K3.1 Pro (Token Factory)' }
+    ];
+    if (!models.map(m => m.id).includes(PROVIDERS.sarvam.model)) {
+      PROVIDERS.sarvam.model = 'sarvam-105b';
+    }
   }
 
   models.forEach(m => {
@@ -1390,6 +1412,7 @@ async function mockAskQuestion(question) {
   if (s.gemini2Model) PROVIDERS.gemini2.model = s.gemini2Model;
   if (s.groqModel) PROVIDERS.groq.model = s.groqModel;
   if (s.deepseekModel) PROVIDERS.deepseek.model = s.deepseekModel;
+  if (s.sarvamModel) PROVIDERS.sarvam.model = s.sarvamModel;
 
   if (s.modelTemperature !== undefined) {
     window.currentTemperature = parseFloat(s.modelTemperature);
@@ -1443,7 +1466,7 @@ async function mockAskQuestion(question) {
     $('aiProviderSelect').value = 'chatgpt';
   }
 
-  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'cerebras'].includes(currentProvider)) {
+  if (['chatgpt', 'deepseek', 'gemini', 'gemini2', 'groq', 'cerebras', 'sarvam'].includes(currentProvider)) {
     $('editChatgptPromptBtn').style.display = 'block';
   }
 
@@ -3723,6 +3746,7 @@ function showChatGPTPromptPreview(force = false) {
   else if (pLower === 'gemini2') pName = 'Google Gemini 2';
   else if (pLower === 'groq') pName = 'Groq';
   else if (pLower === 'deepseek') pName = 'DeepSeek';
+  else if (pLower === 'sarvam') pName = 'Sarvam AI';
   else if (pLower === 'cerebras') pName = 'Cerebras Cloud';
   else pName = currentProvider ? currentProvider.toUpperCase() : 'AI Assistant';
 
@@ -3991,7 +4015,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
 
     if (imageBase64) {
       const images = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
-      if (['cerebras', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider)) {
+      if (['cerebras', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek', 'sarvam'].includes(effectiveProvider)) {
         const contentParts = [
           { type: 'text', text: images.length > 1 
               ? `These ${images.length} screenshots are sequential parts of one question. Read all parts together, then answer what is asked. It may be a multiple-choice question, a coding problem, a diagram, or a form. If it is multiple choice, state the correct option with a one-line reason.`
@@ -4045,11 +4069,14 @@ async function askQuestion(qOverride, imageBase64 = null) {
     let responsesModeActive = false;
     for (let i = 0; i < modelsToTry.length; i++) {
       const currentModel = modelsToTry[i];
-      const isOpenAICompatible = ['cerebras', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek'].includes(effectiveProvider);
+      const isOpenAICompatible = ['cerebras', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek', 'sarvam'].includes(effectiveProvider);
       const useResponsesApi = effectiveProvider === 'chatgpt' && window.chatgptResponsesEnabled !== false;
 
       if (isOpenAICompatible) {
         headers['Authorization'] = `Bearer ${effectiveKey}`;
+        if (effectiveProvider === 'sarvam') {
+          headers['api-subscription-key'] = effectiveKey;
+        }
         
         let sanitizedMessages = historyMessages;
         if (effectiveProvider === 'groq' && !currentModel.startsWith('qwen/qwen3.')) {
@@ -4192,6 +4219,9 @@ async function askQuestion(qOverride, imageBase64 = null) {
             requestBody.reasoning_effort = (activeEffort === 'xhigh' ? 'high' : activeEffort);
             delete requestBody.temperature;
           }
+        } else if (effectiveProvider === 'sarvam') {
+          requestBody.max_tokens = maxTokensBudget;
+          requestBody.temperature = userTemp;
         } else {
           requestBody.max_tokens = maxTokensBudget;
           requestBody.temperature = userTemp;
@@ -4237,9 +4267,18 @@ async function askQuestion(qOverride, imageBase64 = null) {
         });
       }
 
-      const endpoint = isOpenAICompatible
-        ? (useResponsesApi ? `${cfg.apiBase}/responses` : `${cfg.apiBase}/chat/completions`)
-        : `${cfg.apiBase}/messages`;
+      let endpoint;
+      if (effectiveProvider === 'sarvam') {
+        if (currentModel === 'sarvam-105b-conversations') {
+          endpoint = 'https://api.sarvam.ai/v1/chat/completions';
+        } else {
+          endpoint = 'https://api.sarvam.ai/v2/chat/completions';
+        }
+      } else if (isOpenAICompatible) {
+        endpoint = useResponsesApi ? `${cfg.apiBase}/responses` : `${cfg.apiBase}/chat/completions`;
+      } else {
+        endpoint = `${cfg.apiBase}/messages`;
+      }
 
       res = await fetch(endpoint, { 
         method: 'POST', 
@@ -4270,8 +4309,8 @@ async function askQuestion(qOverride, imageBase64 = null) {
 
       if (res.status === 402) {
         errMsg = `Payment Required (HTTP 402): Your ${effectiveProvider.toUpperCase()} account needs credits/billing activated at their cloud dashboard. Tip: Switch to Groq (openai/gpt-oss-120b) or Google Gemini for free usage.`;
-      } else if (res.status === 401) {
-        errMsg = `Invalid API Key (HTTP 401): Please verify your ${effectiveProvider.toUpperCase()} API key in the control panel.`;
+      } else if (res.status === 401 || res.status === 403) {
+        errMsg = `Invalid or Unauthorized API Key (HTTP ${res.status}): Please verify your ${effectiveProvider.toUpperCase()} key in the control panel.`;
       } else if (res.status === 429) {
         errMsg = `Rate Limit Exceeded (HTTP 429): Too many requests. Please wait a moment or switch provider.`;
       }
