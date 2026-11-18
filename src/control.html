@@ -765,7 +765,7 @@ const PROVIDERS = {
     placeholder: 'sarvam-api-key...',
     hint: 'Get your key at sarvam.ai · Indian Sovereign AI & Token Factory.',
     apiBase: 'https://api.sarvam.ai/v2',
-    model: 'sarvam-105b',
+    model: 'deepseekv4.1-flash-1017-interactive',
   }
 };
 
@@ -1110,7 +1110,8 @@ function updateModelTuningUI() {
   const isReasoningSupported = (prov === 'chatgpt' && (model.includes('luna') || model.includes('o1') || model.includes('o3'))) ||
                                (prov === 'gemini' || prov === 'gemini2') ||
                                (prov === 'deepseek') ||
-                               (prov === 'cerebras');
+                               (prov === 'cerebras') ||
+                               (prov === 'sarvam' && model.includes('deepseek'));
 
   if (isReasoningSupported) {
     if (reasonRow) reasonRow.style.display = 'block';
@@ -1121,6 +1122,7 @@ function updateModelTuningUI() {
       else if (prov.startsWith('gemini')) reasonLabel.textContent = 'Gemini Reasoning / Thinking Mode';
       else if (prov === 'deepseek') reasonLabel.textContent = 'DeepSeek Reasoning / Thinking Mode';
       else if (prov === 'cerebras') reasonLabel.textContent = 'Cerebras Reasoning / Thinking Mode';
+      else if (prov === 'sarvam') reasonLabel.textContent = 'Sarvam DeepSeek Reasoning Mode';
     }
 
     const effort = reasonSelect?.value || window.currentReasoningEffort || 'none';
@@ -1137,6 +1139,8 @@ function updateModelTuningUI() {
           tempHint.textContent = 'Option A Active: DeepSeek standard fast mode. Recommended 0.30 for deterministic Apex.';
         } else if (prov === 'cerebras') {
           tempHint.textContent = 'Option A Active: Zero-delay ultra-fast mode (reasoning off). Responses arrive in under 1 second.';
+        } else if (prov === 'sarvam') {
+          tempHint.textContent = 'Option A Active: Sarvam DeepSeek interactive fast mode (200+ tps). Custom temperature is active.';
         } else {
           tempHint.textContent = 'Option A Active: Custom temperature is active. Fast, zero-lag streaming.';
         }
@@ -1272,17 +1276,14 @@ function populateAiModels(provider) {
     }
   } else if (provider === 'sarvam') {
     models = [
+      { id: 'deepseekv4.1-flash-1017-interactive', label: 'DeepSeek V4.1 Flash 1017 (Interactive · 200+ tps)' },
+      { id: 'deepseekv4.1-flash-1017', label: 'DeepSeek V4.1 Flash 1017 (Standard)' },
       { id: 'sarvam-105b', label: 'Sarvam 105B (Flagship Indian Reasoning & Code)' },
-      { id: 'sarvam-105b-conversations', label: 'Sarvam 105B Conversations (Real-time Dialogue)' },
-      { id: 'glm5.3', label: 'Sarvam GLM 5.3 (High-Speed Reasoning)' },
       { id: 'glm5.3-flash', label: 'Sarvam GLM 5.3 Flash (Ultra-Low Latency)' },
-      { id: 'deepseekv4.1-flash-1017', label: 'Sarvam DeepSeek 4.1 Flash (Token Factory)' },
-      { id: 'deepseekv4-pro', label: 'Sarvam DeepSeek 4 Pro (High Capacity)' },
-      { id: 'gemma4', label: 'Sarvam Gemma 4 (Token Factory)' },
-      { id: 'kimi-k3.1-pro', label: 'Sarvam Kimi K3.1 Pro (Token Factory)' }
+      { id: 'gemma4', label: 'Sarvam Gemma 4 (Token Factory)' }
     ];
     if (!models.map(m => m.id).includes(PROVIDERS.sarvam.model)) {
-      PROVIDERS.sarvam.model = 'sarvam-105b';
+      PROVIDERS.sarvam.model = 'deepseekv4.1-flash-1017-interactive';
     }
   }
 
@@ -4221,7 +4222,17 @@ async function askQuestion(qOverride, imageBase64 = null) {
           }
         } else if (effectiveProvider === 'sarvam') {
           requestBody.max_tokens = maxTokensBudget;
-          requestBody.temperature = userTemp;
+          if (currentModel.includes('deepseek')) {
+            if (activeEffort === 'none') {
+              requestBody.reasoning_effort = 'none';
+              requestBody.temperature = userTemp;
+            } else {
+              requestBody.reasoning_effort = (activeEffort === 'xhigh' ? 'max' : (activeEffort === 'medium' ? 'high' : activeEffort));
+              delete requestBody.temperature;
+            }
+          } else {
+            requestBody.temperature = userTemp;
+          }
         } else {
           requestBody.max_tokens = maxTokensBudget;
           requestBody.temperature = userTemp;
@@ -4269,11 +4280,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
 
       let endpoint;
       if (effectiveProvider === 'sarvam') {
-        if (currentModel === 'sarvam-105b-conversations') {
-          endpoint = 'https://api.sarvam.ai/v1/chat/completions';
-        } else {
-          endpoint = 'https://api.sarvam.ai/v2/chat/completions';
-        }
+        endpoint = 'https://api.sarvam.ai/v2/chat/completions';
       } else if (isOpenAICompatible) {
         endpoint = useResponsesApi ? `${cfg.apiBase}/responses` : `${cfg.apiBase}/chat/completions`;
       } else {
