@@ -2018,6 +2018,27 @@ function startAudioWatchdog() {
         if (tEl) tEl.innerHTML = '<span class="t-placeholder">Listening… (Background noise cleared)</span>';
       }
     }
+
+    // 5. WebSocket Connection Health Check: Auto-revive disconnected STT sockets
+    if (sttEngine === 'deepgram') {
+      if (dgSysSocket && (dgSysSocket.readyState === WebSocket.CLOSING || dgSysSocket.readyState === WebSocket.CLOSED) && systemStream) {
+        console.warn('[Audio Watchdog] Deepgram sys socket is closed/closing while listening. Reconnecting...');
+        connectSysSocket();
+      }
+      if (dgSocket && (dgSocket.readyState === WebSocket.CLOSING || dgSocket.readyState === WebSocket.CLOSED) && micStream) {
+        console.warn('[Audio Watchdog] Deepgram mic socket is closed/closing while listening. Reconnecting...');
+        connectMicSocket();
+      }
+    } else if (sttEngine === 'gemini' || sttEngine === 'gemini38') {
+      if (geminiSysSocket && (geminiSysSocket.readyState === WebSocket.CLOSING || geminiSysSocket.readyState === WebSocket.CLOSED) && systemStream) {
+        console.warn('[Audio Watchdog] Gemini sys socket is closed/closing while listening. Reconnecting...');
+        connectGeminiSysSocket();
+      }
+      if (geminiSocket && (geminiSocket.readyState === WebSocket.CLOSING || geminiSocket.readyState === WebSocket.CLOSED) && micStream) {
+        console.warn('[Audio Watchdog] Gemini mic socket is closed/closing while listening. Reconnecting...');
+        connectGeminiMicSocket();
+      }
+    }
   }, 15000);
 }
 
@@ -2495,25 +2516,25 @@ function triggerAnswer() {
     console.log('[Audio] Still generating previous answer, ignoring trigger');
     return;
   }
-  const rawQ = finalTranscript.trim();
+  const rawQ = (finalTranscript || window.currentInterviewerText || '').trim();
   if (!rawQ) return;
-  
-  if (isCandidateEcho(rawQ)) {
-    console.log('[Audio] Echo detected (Candidate reading previous answer). Discarding.');
-    finalTranscript = '';
-    $('transcript').innerHTML = '<span class="t-placeholder">Listening… (Candidate reading suppressed)</span>';
-    return;
-  }
   
   if (!isValidQuestion(rawQ)) {
     console.log('[Audio] Speech is greeting / chatter / noise. Discarding without triggering AI:', rawQ);
     finalTranscript = '';
+    window.currentInterviewerText = '';
+    geminiSysCommitted = '';
+    geminiSysTurnText = '';
     return;
   }
   
   const cleanedQ = cleanQuestionForAI(rawQ);
   console.log('[Audio] Valid Question Finalized -> Triggering AI Answer:', cleanedQ);
   finalTranscript = ''; // Reset immediately so subsequent speech starts fresh
+  window.currentInterviewerText = '';
+  geminiSysCommitted = '';
+  geminiSysTurnText = '';
+  cancelPendingTimers();
   submitOrQueue(cleanedQ);
 }
 function startNativeSpeech(SR) {
@@ -2831,6 +2852,13 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
           const sc = data?.serverContent;
           const modelParts = sc?.modelTurn?.parts?.map(p => p.text).filter(Boolean).join(' ') || '';
           const inputText = (sc?.interimInputTranscription?.text || sc?.inputTranscription?.text || modelParts || '').trim();
+
+          if (isGenerating) {
+            // Ignore speech while an answer is generating to prevent previous question tails from leaking
+            geminiSysTurnText = '';
+            geminiSysCommitted = '';
+            return;
+          }
 
           // triggerAnswer() / pending rejection clears finalTranscript once consumed
           if (!finalTranscript && (geminiSysCommitted || geminiSysTurnText)) {
@@ -3375,6 +3403,10 @@ async function startDeepgramMic(apiKey) {
           const data = JSON.parse(msg.data);
           if (data.type === 'Metadata') return;
           const transcript = data?.channel?.alternatives?.[0]?.transcript?.trim();
+          if (isGenerating) {
+            // Discard audio while generating so answers or trailing words never leak into the next question
+            return;
+          }
           if (transcript) {
             $('waveform').style.opacity = '0.5';
             setTimeout(() => $('waveform').style.opacity = '1', 100);
@@ -3397,8 +3429,8 @@ async function startDeepgramMic(apiKey) {
                 }
               }, PAUSE_MS + 300); // slightly longer than the volume based one
             }
-          } else if (data.type === 'UtteranceEnd' && window.currentInterviewerText) {
-            finalTranscript = window.currentInterviewerText;
+          } else if (data.type === 'UtteranceEnd') {
+            // Utterance ended: do NOT resurrect previously consumed questions into finalTranscript
           }
         } catch(e) {}
       };
@@ -3896,31 +3928,34 @@ async function askQuestion(qOverride, imageBase64 = null) {
   question = question.replace(/^Question:\s*["']?/i, '').replace(/["']$/i, '').trim();
   if (!question && !imageBase64) return;
   if (isGenerating) {
-    if (imageBase64) {
-      // User captured a new screenshot while an old request is running or stuck!
-      // Cancel the old request immediately and proceed with this new screenshot!
-      console.warn('[askQuestion] Preempting previous generation with new screenshot capture');
-      if (activeAbortController) {
-        try { activeAbortController.abort(); } catch(e){}
-        activeAbortController = null;
-      }
-      isGenerating = false;
-      $('askBtn').disabled = false;
-    } else {
-      setStatus('⚡ An answer is already generating…');
-      return;
+    // If user clicked Ask with a manual question or screenshot, preempt any hung/stuck generation immediately!
+    console.warn('[askQuestion] Preempting previous generation with new question request');
+    if (activeAbortController) {
+      try { activeAbortController.abort(); } catch(e){}
+      activeAbortController = null;
     }
+    isGenerating = false;
+    $('askBtn').disabled = false;
   }
   isGenerating = true;
   $('askBtn').disabled = true;
+  if (!qOverride && $('manualQ')) {
+    $('manualQ').value = ''; // clear manual input once submitted
+  }
+  // Flush speech buffers so old question words never leak into subsequent turns
+  finalTranscript = '';
+  window.currentInterviewerText = '';
+  geminiSysCommitted = '';
+  geminiSysTurnText = '';
+
   activeAbortController = new AbortController();
   const currentCtrl = activeAbortController;
   let watchdogFired = false;
   const watchdogTimer = setTimeout(() => {
     watchdogFired = true;
-    console.warn('[Watchdog] AI request exceeded 60s limit. Aborting...');
+    console.warn('[Watchdog] AI request exceeded 30s limit. Aborting...');
     try { currentCtrl.abort(); } catch(e){}
-  }, 60000);
+  }, 30000);
 
   let effectiveProvider = currentProvider;
   let cfg = PROVIDERS[effectiveProvider];
@@ -4664,6 +4699,10 @@ async function askQuestion(qOverride, imageBase64 = null) {
     isGenerating = false;
     $('askBtn').disabled = false;
     activeAbortController = null;
+    finalTranscript = '';
+    window.currentInterviewerText = '';
+    geminiSysCommitted = '';
+    geminiSysTurnText = '';
   }
 }
 
@@ -4677,12 +4716,20 @@ function autoSaveSession() {
 }
 
 function clearAll() {
+  if (activeAbortController) {
+    try { activeAbortController.abort(); } catch(e){}
+    activeAbortController = null;
+  }
+  isGenerating = false;
+  $('askBtn').disabled = false;
   ipcRenderer.send('answer-clear');
   clearPendingQuestion();
   $('transcript').innerHTML = '<span class="t-placeholder">Transcript will appear here…</span>';
   $('manualQ').value = '';
   finalTranscript = '';
   window.currentInterviewerText = '';
+  geminiSysCommitted = '';
+  geminiSysTurnText = '';
   sessionStart = null;
   currentSessionId = null;
   currentSessionQA = [];
