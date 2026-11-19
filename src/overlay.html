@@ -1470,6 +1470,12 @@ ipcRenderer.on('show-question', (_, qData) => {
   qTimerBadge.title = 'Measuring AI response time…';
 
   qLabel.appendChild(qTitle);
+  if (typeof qData === 'object' && qData && qData.intent) {
+    const intentBadge = document.createElement('span');
+    intentBadge.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:10px;background:rgba(99,102,241,0.2);color:#a5b4fc;margin-left:6px;font-weight:600;border:1px solid rgba(99,102,241,0.3);';
+    intentBadge.textContent = '🎯 ' + qData.intent;
+    qLabel.appendChild(intentBadge);
+  }
   qLabel.appendChild(qTimerBadge);
 
   const qContent = document.createElement('div');
