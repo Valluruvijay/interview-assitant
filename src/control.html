@@ -702,6 +702,7 @@ let isLongQuestionMode = false;
 let activeAbortController = null;
 let usageCount = 0;
 let currentSessionQA = [];
+let currentCandidateLog = [];
 let sessionStart = null;
 let cachedSessionSystemPrompt = null;
 let testMode = false;
@@ -2288,14 +2289,14 @@ async function toggleMic() {
 
 function isCandidateEcho(text) {
   if (!text || !currentSessionQA || !currentSessionQA.length) return false;
-  const last = currentSessionQA[currentSessionQA.length - 1];
-  if (!last || !last.answer) return false;
+  const lastQA = [...currentSessionQA].reverse().find(x => x && x.answer);
+  if (!lastQA || !lastQA.answer) return false;
   
   const extractWords = str => (str.toLowerCase().match(/[a-z0-9]{4,}/g) || []);
   const spokenWords = extractWords(text);
   if (spokenWords.length < 5) return false;
   
-  const lastAnsWords = new Set(extractWords(last.answer));
+  const lastAnsWords = new Set(extractWords(lastQA.answer));
   let matchCount = 0;
   spokenWords.forEach(w => { if (lastAnsWords.has(w)) matchCount++; });
   const similarity = matchCount / spokenWords.length;
@@ -2345,7 +2346,41 @@ function isValidQuestion(text) {
 
 function cleanQuestionForAI(text) {
   if (!text) return '';
-  return text.trim();
+  let cleaned = String(text).trim();
+  // Normalize extra newlines and spaces
+  cleaned = cleaned.replace(/\r?\n+/g, ' ').replace(/\s+/g, ' ').trim();
+  // Clean consecutive duplicate words caused by audio stutter/STT repetition (e.g. "elderly elderly" -> "elderly")
+  cleaned = cleaned.replace(/\b([a-zA-Z]{2,})(?:\s+\1\b)+/gi, (match, p1) => p1);
+  return cleaned;
+}
+
+function mergeOverlappingPhrases(a, b) {
+  if (!a) return (b || '').trim();
+  if (!b) return (a || '').trim();
+  const aTrim = a.trim();
+  const bTrim = b.trim();
+  const aLower = aTrim.toLowerCase();
+  const bLower = bTrim.toLowerCase();
+
+  // If one string contains the other entirely, keep the longer / more complete one
+  if (aLower.includes(bLower)) return aTrim;
+  if (bLower.includes(aLower)) return bTrim;
+
+  // Check word-level overlap at boundaries (e.g. "How do you build" + "build an LWC component")
+  const aWords = aTrim.split(/\s+/);
+  const bWords = bTrim.split(/\s+/);
+  const maxOverlap = Math.min(aWords.length, bWords.length);
+  for (let len = maxOverlap; len > 0; len--) {
+    const aTail = aWords.slice(-len).join(' ').toLowerCase();
+    const bHead = bWords.slice(0, len).join(' ').toLowerCase();
+    if (aTail === bHead) {
+      const remainder = bWords.slice(len).join(' ');
+      return remainder ? `${aTrim} ${remainder}` : aTrim;
+    }
+  }
+
+  // No direct overlap: combine with a single space (prevent newline stutter)
+  return `${aTrim} ${bTrim}`;
 }
 
 function handleAutoSendToggle(enabled) {
@@ -2389,7 +2424,11 @@ function queuePendingQuestion(question) {
   const q = String(question || '').trim();
   if (!q) return;
   cancelPendingTimers();
-  window.pendingQuestion = window.pendingQuestion ? window.pendingQuestion + '\n' + q : q;
+  if (!window.pendingQuestion) {
+    window.pendingQuestion = q;
+  } else {
+    window.pendingQuestion = mergeOverlappingPhrases(window.pendingQuestion, q);
+  }
   finalTranscript = '';
   window.currentInterviewerText = '';
   renderPendingQuestion();
@@ -2413,7 +2452,11 @@ function clearPendingQuestion() {
 
 function sendPendingQuestion() {
   const live = (window.currentInterviewerText || finalTranscript || '').trim();
-  const q = [window.pendingQuestion, live].filter(Boolean).join('\n').trim();
+  let q = (window.pendingQuestion || '').trim();
+  if (live) {
+    q = q ? mergeOverlappingPhrases(q, live) : live;
+  }
+  q = cleanQuestionForAI(q);
   if (!q) {
     setStatus('No captured question to send.');
     return;
@@ -2433,7 +2476,10 @@ function sendPendingQuestion() {
 
 function discardPendingQuestion() {
   const live = (window.currentInterviewerText || finalTranscript || '').trim();
-  const text = [window.pendingQuestion, live].filter(Boolean).join('\n').trim();
+  let text = (window.pendingQuestion || '').trim();
+  if (live) {
+    text = text ? mergeOverlappingPhrases(text, live) : live;
+  }
   if (!text) return;
   cancelPendingTimers();
   window.pendingQuestion = '';
@@ -2935,7 +2981,7 @@ async function startGeminiLiveMic(apiKey, modelName = 'models/gemini-3.5-transcr
             candidateFinalTranscript = '';
             candidateTranscript = '';
             ipcRenderer.send('candidate-spoke', utterance);
-            currentSessionQA.push({ role: 'candidate', text: utterance, time: new Date().toISOString() });
+            currentCandidateLog.push({ text: utterance, time: new Date().toISOString() });
           }
         } catch(e) {}
       };
@@ -3263,7 +3309,7 @@ async function startDeepgramMic(apiKey) {
                   ipcRenderer.send('candidate-interim', candidateTranscript);
                   if (data.speech_final || data.type === 'UtteranceEnd') {
                     ipcRenderer.send('candidate-spoke', candidateTranscript);
-                    currentSessionQA.push({ role: 'candidate', text: candidateTranscript, time: new Date().toISOString() });
+                    currentCandidateLog.push({ text: candidateTranscript, time: new Date().toISOString() });
                     candidateFinalTranscript = '';
                     candidateTranscript = '';
                   }
@@ -3274,7 +3320,7 @@ async function startDeepgramMic(apiKey) {
             candidateTranscript = candidateFinalTranscript.trim();
             showCandidateTranscript(candidateTranscript);
             ipcRenderer.send('candidate-spoke', candidateTranscript);
-            currentSessionQA.push({ role: 'candidate', text: candidateTranscript, time: new Date().toISOString() });
+            currentCandidateLog.push({ text: candidateTranscript, time: new Date().toISOString() });
             candidateFinalTranscript = '';
             candidateTranscript = '';
           }
@@ -3577,31 +3623,25 @@ function buildChatGPTSystemPrompt(question = '', useOverride = true) {
     if (!p.includes('Quick Talking Points')) {
       p += `\n\n## 10. Mandatory Teleprompter & Follow-Up Structure
 
-Format every response strictly with these three distinct sections so I can speak immediately without reading a wall of text:
+Format every response strictly with these three distinct sections so I can speak immediately without reading a wall of text. KEEP TOTAL RESPONSE TELEPROMPTER-CONCISE (MAX 1,200 - 1,500 CHARACTERS):
 
 ### 🗣️ Quick Talking Points (Say this aloud):
 
-- **[Direct Thesis]**: Confident 1-sentence thesis answering the question directly in first person ("I usually handle this by...", "In this scenario, the best approach is..."). Dont Include Corrected STT if CorrectBY salesforce terminology just provide it 
-- **[Core Mechanism]**: Key technical pattern, architecture, or Salesforce LWC/Apex mechanism used.
-- **[Impact / Trade-off]**: Real-world outcome, governor limit handled, or performance gain.
+- **[Direct Thesis]**: Confident 1-sentence thesis answering the question directly in first person ("I usually handle this by...", "In this scenario, the best approach is..."). Use correct Salesforce terminology without mentioning STT errors.
+- **[Core Mechanism]**: Exactly 1 punchy sentence highlighting the key technical pattern, architecture, or Salesforce mechanism.
+- **[Impact / Trade-off]**: Exactly 1 punchy sentence stating the real-world outcome, governor limit handled, or performance gain.
+*(Strict limit: exactly 3 bullets, maximum 1 sentence each, speakable in under 20 seconds).*
 
 ---
 
 ### 📋 Full Explanation & Implementation:
 
-[Provide the complete technical explanation, code blocks, comparison tables, and execution flow details here so I can provide deeper insight if asked.]
+[Provide a concise, highly scannable technical explanation (under 800-1,200 characters). Use bullet points, a clean comparison table, or a short code snippet (max 10-15 lines). DO NOT write lengthy academic essays or massive walls of text.]
 
-**Formatting flexibility – Tables and other formats are fully supported:**
-
-- You are allowed and encouraged to create Markdown tables whenever they improve clarity.
-- Tables can have any number of rows and columns required to explain the topic.
-- Use tables for technical comparisons, differences, advantages, disadvantages, features, pros and cons, and implementation approaches.
-- Use tables for comparisons such as Apex vs Flow, Queueable vs Future vs Batch Apex, @wire vs Imperative Apex, REST vs SOAP, and other Salesforce concepts.
-- Include tables within the Full Explanation & Implementation section.
-- Use Markdown bullet points, numbered lists, code blocks, and architecture or execution-flow diagrams wherever appropriate.
-- Do not restrict responses to plain paragraphs or bullet points.
-- Choose the most suitable format for the technical question.
-- **MANDATORY FOR COMPARISONS & DIFFERENCES**: Whenever the question asks for a comparison, difference, 'vs', trade-offs, advantages/disadvantages, pros & cons, or when to choose one feature over another (e.g. Apex vs Flow, Queueable vs Future vs Batch Apex, @wire vs Imperative Apex, REST vs SOAP), you MUST include a clean Markdown comparison table inside the 📋 Full Explanation & Implementation section. For other non-comparison questions, do not force a table if a simple conversational explanation is sufficient.
+**Formatting rules:**
+- **MANDATORY FOR COMPARISONS & DIFFERENCES**: Whenever the question asks for a comparison, difference, 'vs', trade-offs, advantages/disadvantages, pros & cons, or when to choose one feature over another (e.g. Apex vs Flow, Queueable vs Future vs Batch Apex, @wire vs Imperative Apex, REST vs SOAP), you MUST include a clean Markdown comparison table inside this section.
+- For other non-comparison questions, do not force a table; provide 3-5 scannable bullet points or a concise code snippet (max 10-15 lines).
+- Avoid unnecessary fluff, introductory filler, or multi-page code samples. Keep it scannable in 5 seconds.
 
 ---
 
@@ -3623,15 +3663,18 @@ Format every response strictly with these three distinct sections so I can speak
 - Avoid formal, robotic, textbook phrasing.
 - Avoid unnecessary technical jargon unless it adds value.
 
-## 2. Answer depth
+## 2. Answer depth & Teleprompter Brevity (CRITICAL)
 
-- Straightforward question: 3 to 4 sentences.
-- Technical question: 4 to 6 sentences with a little explanation.
-- Difference / Comparison / "vs" question: High-level contrast in Quick Talking Points, followed by a mandatory structured Markdown comparison table in Full Explanation.
-- Scenario-based question: the approach, the implementation, and why I chose it.
-- Architecture question: the design, the execution flow, and the important considerations.
-- Follow-up question: explain the specific point being asked without repeating the previous answer.
-- Do not make answers unnecessarily long, but never sacrifice important technical detail just to keep them short.
+- SPEED AND CONCISENESS ARE PARAMOUNT: In a live interview, long responses cause speech delays and are impossible to read on a teleprompter.
+- MAXIMUM TOTAL LENGTH: The ENTIRE response MUST be strictly under 1,200 to 1,500 characters total.
+- Quick Talking Points: Strictly 3 punchy bullets, exactly 1 sentence each, spoken aloud in under 20 seconds.
+- Full Explanation & Implementation: Highly scannable in 5 seconds. Use concise bullet points, 1 clean Markdown comparison table (for differences/trade-offs), or 1 focused code snippet (max 10-15 lines).
+- STRICT PROHIBITION: NEVER write multi-page essays, 8,000-character textbook dumps, redundant boilerplate, or multiple full code files.
+- Straightforward question: 2 to 3 sentences in Full Explanation.
+- Technical question: 3 to 5 concise bullet points highlighting key mechanisms.
+- Difference / Comparison / "vs" question: High-level contrast in Quick Talking Points, followed by a compact, clean Markdown comparison table in Full Explanation.
+- Scenario-based question: Brief approach, implementation, and governor limit/trade-off.
+- Follow-up question: Explain the specific point being asked without repeating the previous answer.
 
 ## 3. Explain the implementation
 
@@ -3641,9 +3684,9 @@ Where relevant, naturally cover:
 2. Which Salesforce components I would use.
 3. How the implementation would work.
 4. Why that approach is suitable.
-5. Important limitations, governor limits, security, or error-handling considerations.
+5. Important governor limits or error-handling considerations.
 
-Do not force all five points into every answer. Include only what is relevant.
+Do not force all five points into every answer. Include only what is directly relevant.
 
 ## 4. Salesforce technical accuracy
 
@@ -3671,14 +3714,14 @@ If a technical approach in the question is incorrect, explain the correct approa
 
 ## 6. Scenario-based questions
 
-Answer like an experienced developer solving a production requirement. Explain the actual solution: which trigger or service class is involved, how records are queried and updated, whether asynchronous processing is required, how exceptions and partial failures are handled, and how data consistency and security are maintained. Include trade-offs where they matter.
+Answer like an experienced developer solving a production requirement. Explain the actual solution concisely: which trigger or service class is involved, how records are queried and updated, whether asynchronous processing is required, and how governor limits are respected.
 
 ## 7. Coding questions
 
-- Start with a short explanation of the approach.
-- Provide complete, compile-consistent code.
-- Follow the code with a few important implementation notes.
-- Consider bulkification, security, governor limits and edge cases.
+- Start with a 1-sentence explanation of the approach.
+- Provide a clean, compile-consistent code snippet (strictly max 10-15 lines of core logic).
+- Never provide boilerplate classes or multiple large files.
+- Follow the code with 1-2 bullet points on governor limits or best practices.
 - Never provide pseudocode when executable code is requested.
 
 ## 8. Follow-up questions
@@ -3689,35 +3732,29 @@ Answer like an experienced developer solving a production requirement. Explain t
 
 ## 9. Speech-to-text interpretation
 
-I may provide questions through speech-to-text, so grammar and technical terms may be incorrect. Understand the intended Salesforce question and answer it directly. Ask for clarification only if different interpretations would materially change the solution.
+I may provide questions through speech-to-text, so grammar and technical terms may be phonetically altered (e.g. "elderly component" -> LWC component). Understand the intended Salesforce question and answer it directly using correct Salesforce terminology.
 
 ## 10. Mandatory Teleprompter & Follow-Up Structure
 
-Format every response strictly with these three distinct sections so I can speak immediately without reading a wall of text:
+Format every response strictly with these three distinct sections so I can speak immediately without reading a wall of text. KEEP TOTAL RESPONSE TELEPROMPTER-CONCISE (MAX 1,200 - 1,500 CHARACTERS):
 
 ### 🗣️ Quick Talking Points (Say this aloud):
 
-- **[Direct Thesis]**: Confident 1-sentence thesis answering the question directly in first person ("I usually handle this by...", "In this scenario, the best approach is..."). Dont Include Corrected STT if CorrectBY salesforce terminology just provide it 
-- **[Core Mechanism]**: Key technical pattern, architecture, or Salesforce LWC/Apex mechanism used.
-- **[Impact / Trade-off]**: Real-world outcome, governor limit handled, or performance gain.
+- **[Direct Thesis]**: Confident 1-sentence thesis answering the question directly in first person ("I usually handle this by...", "In this scenario, the best approach is..."). Use correct Salesforce terminology without mentioning STT errors.
+- **[Core Mechanism]**: Exactly 1 punchy sentence highlighting the key technical pattern, architecture, or Salesforce mechanism.
+- **[Impact / Trade-off]**: Exactly 1 punchy sentence stating the real-world outcome, governor limit handled, or performance gain.
+*(Strict limit: exactly 3 bullets, maximum 1 sentence each, speakable in under 20 seconds).*
 
 ---
 
 ### 📋 Full Explanation & Implementation:
 
-[Provide the complete technical explanation, code blocks, comparison tables, and execution flow details here so I can provide deeper insight if asked.]
+[Provide a concise, highly scannable technical explanation (under 800-1,200 characters). Use bullet points, a clean comparison table, or a short code snippet (max 10-15 lines). DO NOT write lengthy academic essays or massive walls of text.]
 
-**Formatting flexibility – Tables and other formats are fully supported:**
-
-- You are allowed and encouraged to create Markdown tables whenever they improve clarity.
-- Tables can have any number of rows and columns required to explain the topic.
-- Use tables for technical comparisons, differences, advantages, disadvantages, features, pros and cons, and implementation approaches.
-- Use tables for comparisons such as Apex vs Flow, Queueable vs Future vs Batch Apex, @wire vs Imperative Apex, REST vs SOAP, and other Salesforce concepts.
-- Include tables within the Full Explanation & Implementation section.
-- Use Markdown bullet points, numbered lists, code blocks, and architecture or execution-flow diagrams wherever appropriate.
-- Do not restrict responses to plain paragraphs or bullet points.
-- Choose the most suitable format for the technical question.
-- **MANDATORY FOR COMPARISONS & DIFFERENCES**: Whenever the question asks for a comparison, difference, 'vs', trade-offs, advantages/disadvantages, pros & cons, or when to choose one feature over another (e.g. Apex vs Flow, Queueable vs Future vs Batch Apex, @wire vs Imperative Apex, REST vs SOAP), you MUST include a clean Markdown comparison table inside the 📋 Full Explanation & Implementation section. For other non-comparison questions, do not force a table if a simple conversational explanation is sufficient.
+**Formatting rules:**
+- **MANDATORY FOR COMPARISONS & DIFFERENCES**: Whenever the question asks for a comparison, difference, 'vs', trade-offs, advantages/disadvantages, pros & cons, or when to choose one feature over another (e.g. Apex vs Flow, Queueable vs Future vs Batch Apex, @wire vs Imperative Apex, REST vs SOAP), you MUST include a clean Markdown comparison table inside this section.
+- For other non-comparison questions, do not force a table; provide 3-5 scannable bullet points or a concise code snippet (max 10-15 lines).
+- Avoid unnecessary fluff, introductory filler, or multi-page code samples. Keep it scannable in 5 seconds.
 
 ---
 
@@ -3726,7 +3763,7 @@ Format every response strictly with these three distinct sections so I can speak
 1. **[Likely Follow-up Question 1]** → *[1-sentence hint on how to respond]*
 2. **[Likely Follow-up Question 2]** → *[1-sentence hint on how to respond]*
 
-Main objective: help me communicate my actual Salesforce knowledge confidently, naturally, and with enough technical depth to demonstrate the thinking of an experienced developer.`;
+Main objective: help me communicate my actual Salesforce knowledge confidently, naturally, concisely, and with enough technical depth to demonstrate the thinking of an experienced developer without causing speech delays.`;
   }
 
   if (jdTextData && (!useOverride || !chatgptPromptOverride.includes(jdTextData))) {
@@ -4615,6 +4652,7 @@ function clearAll() {
   sessionStart = null;
   currentSessionId = null;
   currentSessionQA = [];
+  currentCandidateLog = [];
   cachedSessionSystemPrompt = null;
   setStatus('Cleared');
 }
