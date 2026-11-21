@@ -75,8 +75,6 @@ app.on('quit', (event, exitCode) => {
 });
 const settingsFile = path.join(userDataPath, 'settings.json');
 const sessionsFile = path.join(userDataPath, 'sessions.json');
-const referenceFilesStorage = path.join(userDataPath, 'reference-materials.json');
-const resumeFilesStorage = path.join(userDataPath, 'resume-materials.json');
 
 const SUPPORTED_REFERENCE_EXTENSIONS = new Set([
   '.pdf', '.doc', '.docx', '.txt', '.md', '.markdown', '.csv', '.png', '.jpg', '.jpeg'
@@ -93,18 +91,6 @@ function loadSessions() {
 }
 function saveSessions(data) {
   try { fs.writeFileSync(sessionsFile, JSON.stringify(data, null, 2)); } catch {}
-}
-function loadReferenceFiles() {
-  try { return JSON.parse(fs.readFileSync(referenceFilesStorage, 'utf8')); } catch { return []; }
-}
-function saveReferenceFiles(data) {
-  try { fs.writeFileSync(referenceFilesStorage, JSON.stringify(data || [], null, 2)); } catch {}
-}
-function loadResumeFiles() {
-  try { return JSON.parse(fs.readFileSync(resumeFilesStorage, 'utf8')); } catch { return []; }
-}
-function saveResumeFiles(data) {
-  try { fs.writeFileSync(resumeFilesStorage, JSON.stringify(data || [], null, 2)); } catch {}
 }
 
 function stripXml(value) {
@@ -933,10 +919,6 @@ ipcMain.on('save-session', (_, sessionData) => {
 ipcMain.handle('get-sessions', () => loadSessions());
 ipcMain.handle('get-settings', () => loadSettings());
 ipcMain.handle('save-settings', (_, s) => { saveSettings(s); return true; });
-ipcMain.handle('get-reference-files', () => loadReferenceFiles());
-ipcMain.on('save-reference-files', (_, data) => saveReferenceFiles(data));
-ipcMain.handle('get-resume-files', () => loadResumeFiles());
-ipcMain.on('save-resume-files', (_, data) => saveResumeFiles(data));
 ipcMain.handle('get-env-config', () => {
   const settings = loadSettings();
   return {

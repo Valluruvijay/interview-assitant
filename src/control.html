@@ -1594,27 +1594,6 @@ function initReferenceUpload() {
     }));
     drop.addEventListener('drop', e => handleReferenceFiles(e.dataTransfer.files));
   }
-
-  // Auto-restore persisted reference & resume files across restarts
-  try {
-    ipcRenderer.invoke('get-reference-files').then(savedRefs => {
-      if (Array.isArray(savedRefs) && savedRefs.length > 0 && !referenceFiles.length) {
-        referenceFiles = savedRefs;
-        renderReferenceFiles();
-        console.log('[RAG] Restored', referenceFiles.length, 'reference document(s) from disk.');
-      }
-    }).catch(e => console.warn('[RAG] Error restoring reference files:', e));
-
-    ipcRenderer.invoke('get-resume-files').then(savedResume => {
-      if (Array.isArray(savedResume) && savedResume.length > 0 && !resumeFiles.length) {
-        resumeFiles = savedResume;
-        renderResumeFile();
-        console.log('[Resume] Restored candidate resume from disk.');
-      }
-    }).catch(e => console.warn('[Resume] Error restoring resume:', e));
-  } catch (e) {
-    console.warn('[Persistence] Error invoking restore:', e);
-  }
 }
 
 // ── CHUNK REFERENCE TEXT ──────────────────────────────────
@@ -1702,7 +1681,6 @@ async function handleResumeFile(fileList) {
     const fileObj = await parseFileObject(files[0]);
     $('resumeUploadProgressFill').style.width = '85%';
     resumeFiles = [fileObj];
-    ipcRenderer.send('save-resume-files', resumeFiles);
     renderResumeFile();
     setStatus('✓ Parsed & Ready: ' + fileObj.name + ' (' + fileObj.chunks.length + ' chunks)');
   } catch (err) {
@@ -1749,7 +1727,6 @@ function renderResumeFile() {
 
 function removeResumeFile() {
   resumeFiles = [];
-  ipcRenderer.send('save-resume-files', resumeFiles);
   renderResumeFile();
   setStatus('Resume removed.');
 }
@@ -1768,7 +1745,6 @@ async function handleReferenceFiles(fileList) {
       referenceFiles.push(fileObj);
       $('uploadProgressFill').style.width = Math.round(25 + (70 * (i + 1) / files.length)) + '%';
     }
-    ipcRenderer.send('save-reference-files', referenceFiles);
     renderReferenceFiles();
     const textCount = referenceFiles.filter(f => f.text || f.chunks.length).length;
     setStatus(`✓ Parsed and ready: ${referenceFiles.length} reference document(s) loaded in session memory.`);
@@ -1817,7 +1793,6 @@ function renderReferenceFiles() {
 
 function removeReferenceFile(index) {
   referenceFiles.splice(index, 1);
-  ipcRenderer.send('save-reference-files', referenceFiles);
   renderReferenceFiles();
   setStatus(referenceFiles.length ? 'Reference file removed.' : 'All reference files removed.');
 }
@@ -1847,97 +1822,30 @@ function buildResumeContext(question) {
 
 function buildReferenceContext(question) {
   if (!referenceFiles.length) return '';
-  const stopWords = new Set([
-    'the','and','for','with','that','this','from','what','when','where','tell',
-    'about','your','you','are','was','were','how','why','can','could','would',
-    'should','interview','question','have','has','had','did','does','done',
-    'will','all','any','some','into','than','then','just','also','like','them',
-    'these','those','give','show','mention','look','know','make','made'
-  ]);
-
-  // Expand common STT sound-alike garbles in technical Salesforce context
-  const cleanQ = String(question || '')
-    .replace(/\bfigures\b/gi, 'triggers features')
-    .replace(/\bstatus\b/gi, 'status triggers sla')
-    .replace(/\bsos\b/gi, 'sos sla')
-    .replace(/\belderly component(s)?\b/gi, 'lwc lightning web components')
-    .replace(/\bbatch of eggs\b/gi, 'batch apex');
-
-  const stem = w => w.replace(/(ing|ed|es|s)$/i, '');
-  const qRawTokens = (cleanQ.toLowerCase().match(/[a-z0-9]{3,}/g) || []).filter(w => !stopWords.has(w));
-  const qStems = Array.from(new Set(qRawTokens.map(stem))).filter(s => s.length >= 3);
-
-  // Background tech tokens (selected tech stack & JD)
-  const bgRawTokens = (`${jdTextData} ${Array.from(selectedTechs).join(' ')}`.toLowerCase().match(/[a-z0-9]{3,}/g) || [])
-    .filter(w => !stopWords.has(w));
-  const bgStems = Array.from(new Set(bgRawTokens.map(stem))).filter(s => s.length >= 3);
-
-  // Exact 2-word & 3-word phrases from question
-  const qPhrases = [];
-  const words = cleanQ.toLowerCase().split(/\s+/).filter(Boolean);
-  for (let i = 0; i < words.length - 1; i++) {
-    const p2 = `${words[i]} ${words[i+1]}`.replace(/[^a-z0-9 ]/g, '').trim();
-    if (p2.length >= 6) qPhrases.push(p2);
-    if (i < words.length - 2) {
-      const p3 = `${words[i]} ${words[i+1]} ${words[i+2]}`.replace(/[^a-z0-9 ]/g, '').trim();
-      if (p3.length >= 9) qPhrases.push(p3);
-    }
-  }
-
+  const queryTerms = tokenizeForSearch(`${question} ${jdTextData} ${Array.from(selectedTechs).join(' ')}`);
   const scored = [];
   for (const file of referenceFiles) {
-    if (!file.chunks || !file.chunks.length) {
-      if (file.text) file.chunks = chunkReferenceText(file.text);
-    }
-    if (!file.chunks || !file.chunks.length) {
+    if (!file.chunks.length) {
       scored.push({ score: 0, file: file.name, text: `[Attached ${file.type || 'file'}: ${file.name}. ${file.warning || 'No text was extracted.'}]` });
       continue;
     }
-
     file.chunks.forEach((chunk, index) => {
       const haystack = chunk.toLowerCase();
       let score = 0;
-
-      // 1. Question keyword & stem matches (HIGH WEIGHT + FREQUENCY BOOST)
-      qStems.forEach(st => {
-        try {
-          const regex = new RegExp('\\b' + st + '[a-z]*\\b', 'gi');
-          const matches = haystack.match(regex);
-          const count = matches ? matches.length : 0;
-          if (count > 0) {
-            score += 20 + Math.min(count, 8) * 5; // 20 base + up to 40 frequency pts
-          }
-        } catch (_) {
-          if (haystack.includes(st)) score += 15;
-        }
-      });
-
-      // 2. Exact phrase bonus (+30 points per matching phrase)
-      qPhrases.forEach(p => {
-        if (haystack.includes(p)) score += 30;
-      });
-
-      // 3. Background tech matches (Low weight, capped at 6 max so they never drown out the question)
-      let bgCount = 0;
-      bgStems.forEach(st => {
-        if (haystack.includes(st)) bgCount += 1;
-      });
-      score += Math.min(bgCount, 6);
-
+      queryTerms.forEach(term => { if (haystack.includes(term)) score += 1; });
       scored.push({ score, file: file.name, index, text: chunk });
     });
   }
-
   return scored
     .sort((a, b) => b.score - a.score)
     .slice(0, 8)
     .map(item => `Source: ${item.file}${item.index != null ? ` chunk ${item.index + 1}` : ''}\n${item.text}`)
     .join('\n\n---\n\n')
-    .slice(0, 14000);
+    .slice(0, 12000);
 }
 
 function tokenizeForSearch(value) {
-  const stop = new Set(['the','and','for','with','that','this','from','what','when','where','tell','about','your','you','are','was','were','how','why','can','could','would','should','interview','question','have','has','had','did','does','done','will','all','any','some']);
+  const stop = new Set(['the','and','for','with','that','this','from','what','when','where','tell','about','your','you','are','was','were','how','why','can','could','would','should','interview','question']);
   return Array.from(new Set(String(value || '').toLowerCase().match(/[a-z0-9]{3,}/g) || []))
     .filter(term => !stop.has(term))
     .slice(0, 40);
@@ -3740,15 +3648,7 @@ function classifyQuestionIntent(q) {
   if (!q) return 'Concept / Difference';
   const l = q.toLowerCase();
 
-  // 1. Deep Dive / In-Depth Technical Breakdown
-  if (
-    /\b(in detail|detailed|deep dive|deeply|walk me through|step by step|explain all|list all|elaborate|thoroughly|in-depth|how exactly|break down|each of them|every one|full breakdown)\b/i.test(l) ||
-    (/\b(triggers|flows|lwcs|components|projects|classes|automations)\b/i.test(l) && /\b(what are all|which all|how many|explain those|explain the|list the)\b/i.test(l))
-  ) {
-    return 'Deep Dive / Detailed Breakdown';
-  }
-
-  // 2. Live Coding / SOQL
+  // 1. Live Coding / SOQL
   if (
     /\b(write|query|code|select|soql|sosl|trigger for|batch class|class to|method to|lwc component|search functionality|syntax|script)\b/i.test(l) ||
     /find (the )?number of/i.test(l) ||
@@ -3759,7 +3659,7 @@ function classifyQuestionIntent(q) {
     return 'Coding / SOQL';
   }
 
-  // 3. Practical Debugging & Troubleshooting
+  // 2. Practical Debugging & Troubleshooting
   if (
     /\b(debug|troubleshoot|investigate|fix|issue|bug|error|exception|timeout|cpu limit|heap|failed|governor limit|prevent duplicate|recursion|recursive|conflict)\b/i.test(l) ||
     /two users create/i.test(l) ||
@@ -3769,7 +3669,7 @@ function classifyQuestionIntent(q) {
     return 'Debugging';
   }
 
-  // 4. Project Experience & Real-World Solutions
+  // 3. Project Experience & Real-World Solutions
   if (
     /\b(built|developed|implemented|project|experience|situation|scenario|tell me about|ticket|requirement|design a|convert.*to technical|role in|responsibility|production issue|how did you|how you)\b/i.test(l) ||
     /have you worked on/i.test(l) ||
@@ -3782,7 +3682,7 @@ function classifyQuestionIntent(q) {
     return 'Project Experience';
   }
 
-  // 5. Default to Concept / Difference
+  // 4. Default to Concept / Difference
   return 'Concept / Difference';
 }
 
@@ -3797,8 +3697,7 @@ function buildChatGPTSystemPrompt(question = '', useOverride = true) {
 
 ### 🗣️ Quick Talking Points (Say this aloud):
 Strictly 3 punchy 1-sentence bullets (speakable in under 20 seconds), adapted to the question intent:
-- **Deep Dive / Detailed Breakdown**: \`[System Scope]\` (e.g. "Across my roles, I architected 7 production triggers adhering to a strict one-trigger-per-object handler pattern") → \`[Key Implementations]\` (cite specific systems: Nuevo Case SLA, Shell DDR Rollup, CER Bulk Upload) → \`[Core Safeguards]\` (custom setting bypass, \`Set<Id>\` recursion control).
-- **Project Experience ("What have you built?")**: \`[Project Context]\` (concrete Sales/Service/CPQ need; name specific systems from reference context if present: Nuevo, Shell, Finance) → \`[Solution Architecture]\` (exact Apex/Flow/LWC built) → \`[Real-World Gotcha]\` (limit/recursion handled). *Never recite textbook feature definitions.*
+- **Project Experience ("What have you built?")**: \`[Project Context]\` (concrete Sales/Service/CPQ need) → \`[Solution Architecture]\` (exact Apex/Flow/LWC built) → \`[Real-World Gotcha]\` (limit/recursion handled). *Never recite textbook feature definitions.*
 - **Concept / Difference ("X vs Y")**: \`[Direct Thesis]\` (1-line contrast) → \`[Core Mechanism]\` (engine/sharing/memory difference) → \`[Best Practice]\` (when to pick which or key limit).
 - **Debugging ("How do you troubleshoot X?")**: \`[Diagnostic Action]\` (Setup → Apex Jobs / \`AsyncApexJob\` / Trace Flags) → \`[Root-Cause Technique]\` (Execute Anon isolation / \`FINEST\` logs) → \`[Safeguard]\` (Queueable Finalizer / \`Database.RaisesPlatformEvents\` / custom error log).
 - **Coding / SOQL**: \`[Direct Approach]\` (1-line logic) → \`[Bulk Safety]\` (governor limit / index note) → \`[Edge Case]\` (null/dupe/security safeguard).
@@ -3806,13 +3705,8 @@ Strictly 3 punchy 1-sentence bullets (speakable in under 20 seconds), adapted to
 ---
 
 ### 📋 Full Explanation & Implementation:
-- **Deep Dive / Detailed Breakdown ("explain in detail", "walk me through", "deep dive", "each of them", "list all")**:
-  - **NEVER compress into 4 vague bullets! The interviewer explicitly requested detailed depth.**
-  - **For Multi-Component Inquiries (e.g., Triggers, Flows, LWCs):** Provide an itemized breakdown table or structural list covering all key components by name (e.g., T1–T7), Object, Event (\`before insert\`, \`after update\`), and exact business purpose.
-  - **Concrete Architecture & Execution Logic:** Detail the exact class/handler names (e.g., \`CaseTriggerHandler\`, \`CaseSLAService\`), method calls, and how recursion is prevented (e.g., \`Set<Id>\` in-flight tracking vs static Boolean).
-  - **Code Implementation:** Include the exact compile-ready Apex or LWC snippet demonstrating the core algorithm (e.g., \`BusinessHours.add\` for SLA stamping, or row-locking \`FOR UPDATE\` query).
-  - **Governor Limits & Edge Cases:** Explain the 200-record bulk handling, null checks, and sharing rules enforced.
-- **Project**: 4–6 bullets covering: Business Need → Components Built (name actual classes/triggers from reference context!) → Execution Flow → Limit/Gotcha Handled.
+Scannable in 5 seconds (strictly 4–6 tight bullets for prose):
+- **Project**: 4 bullets: Business Need → Components Built → Execution Flow → Limit/Gotcha Handled.
 - **Concept / Difference**: 1 compact Markdown comparison table (max 4–5 rows) + 1 gotcha bullet.
 - **Debugging**: 4 ordered diagnostic steps (Logs/Jobs → Isolate → Fix → Prevent). *No definition tables.*
 - **Coding / SOQL**: Put the **exact compile-ready snippet (10–25 lines, always compilable, never pseudocode) at the very top**, followed by 2 short bullets (bulk/governor safety + edge case).
@@ -3846,8 +3740,7 @@ Strictly 3 punchy 1-sentence bullets (speakable in under 20 seconds), adapted to
 
 ### 🗣️ Quick Talking Points (Say this aloud):
 Strictly 3 punchy 1-sentence bullets (speakable in under 20 seconds), adapted to the question intent:
-- **Deep Dive / Detailed Breakdown**: \`[System Scope]\` (e.g. "Across my roles, I architected 7 production triggers adhering to a strict one-trigger-per-object handler pattern") → \`[Key Implementations]\` (cite specific systems: Nuevo Case SLA, Shell DDR Rollup, CER Bulk Upload) → \`[Core Safeguards]\` (custom setting bypass, \`Set<Id>\` recursion control).
-- **Project Experience ("What have you built?")**: \`[Project Context]\` (concrete Sales/Service/CPQ need; name specific systems from reference context if present: Nuevo, Shell, Finance) → \`[Solution Architecture]\` (exact Apex/Flow/LWC built) → \`[Real-World Gotcha]\` (limit/recursion handled). *Never recite textbook feature definitions.*
+- **Project Experience ("What have you built?")**: \`[Project Context]\` (concrete Sales/Service/CPQ need) → \`[Solution Architecture]\` (exact Apex/Flow/LWC built) → \`[Real-World Gotcha]\` (limit/recursion handled). *Never recite textbook feature definitions.*
 - **Concept / Difference ("X vs Y")**: \`[Direct Thesis]\` (1-line contrast) → \`[Core Mechanism]\` (engine/sharing/memory difference) → \`[Best Practice]\` (when to pick which or key limit).
 - **Debugging ("How do you troubleshoot X?")**: \`[Diagnostic Action]\` (Setup → Apex Jobs / \`AsyncApexJob\` / Trace Flags) → \`[Root-Cause Technique]\` (Execute Anon isolation / \`FINEST\` logs) → \`[Safeguard]\` (Queueable Finalizer / \`Database.RaisesPlatformEvents\` / custom error log).
 - **Coding / SOQL**: \`[Direct Approach]\` (1-line logic) → \`[Bulk Safety]\` (governor limit / index note) → \`[Edge Case]\` (null/dupe/security safeguard).
@@ -3855,13 +3748,8 @@ Strictly 3 punchy 1-sentence bullets (speakable in under 20 seconds), adapted to
 ---
 
 ### 📋 Full Explanation & Implementation:
-- **Deep Dive / Detailed Breakdown ("explain in detail", "walk me through", "deep dive", "each of them", "list all")**:
-  - **NEVER compress into 4 vague bullets! The interviewer explicitly requested detailed depth.**
-  - **For Multi-Component Inquiries (e.g., Triggers, Flows, LWCs):** Provide an itemized breakdown table or structural list covering all key components by name (e.g., T1–T7), Object, Event (\`before insert\`, \`after update\`), and exact business purpose.
-  - **Concrete Architecture & Execution Logic:** Detail the exact class/handler names (e.g., \`CaseTriggerHandler\`, \`CaseSLAService\`), method calls, and how recursion is prevented (e.g., \`Set<Id>\` in-flight tracking vs static Boolean).
-  - **Code Implementation:** Include the exact compile-ready Apex or LWC snippet demonstrating the core algorithm (e.g., \`BusinessHours.add\` for SLA stamping, or row-locking \`FOR UPDATE\` query).
-  - **Governor Limits & Edge Cases:** Explain the 200-record bulk handling, null checks, and sharing rules enforced.
-- **Project**: 4–6 bullets covering: Business Need → Components Built (name actual classes/triggers from reference context!) → Execution Flow → Limit/Gotcha Handled.
+Scannable in 5 seconds (strictly 4–6 tight bullets for prose):
+- **Project**: 4 bullets: Business Need → Components Built → Execution Flow → Limit/Gotcha Handled.
 - **Concept / Difference**: 1 compact Markdown comparison table (max 4–5 rows) + 1 gotcha bullet.
 - **Debugging**: 4 ordered diagnostic steps (Logs/Jobs → Isolate → Fix → Prevent). *No definition tables.*
 - **Coding / SOQL**: Put the **exact compile-ready snippet (10–25 lines, always compilable, never pseudocode) at the very top**, followed by 2 short bullets (bulk/governor safety + edge case).
@@ -4282,8 +4170,8 @@ async function askQuestion(qOverride, imageBase64 = null) {
         const dynRef = buildReferenceContext(question);
         if (dynRef && sanitizedMessages.length > 0) {
           const lastMsg = sanitizedMessages[sanitizedMessages.length - 1];
-          if (lastMsg && lastMsg.role === 'user' && typeof lastMsg.content === 'string') {
-            if (!lastMsg.content.includes('[TECHNICAL REFERENCE FOR THIS QUESTION]:')) {
+          if (lastMsg && lastMsg.role === 'user') {
+            if (typeof lastMsg.content === 'string') {
               lastMsg.content = `[TECHNICAL REFERENCE FOR THIS QUESTION]:\n${dynRef}\n\n${lastMsg.content}`;
             }
           }
