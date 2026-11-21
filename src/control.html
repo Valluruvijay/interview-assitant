@@ -2561,11 +2561,11 @@ function startNativeSpeech(SR) {
       if (!isLongQuestionMode && fullText.length >= 6) {
         silenceTimer = setTimeout(() => {
                 if (fullText.replace(/[^a-zA-Z0-9]/g, '').trim().length >= 6 && !isGenerating && isListening) {
-                  console.log('[650ms Fast Silence Gap] Interviewer question ready:', fullText);
+                  console.log(`[${silenceDelayMs}ms Silence Gap] Interviewer question ready:`, fullText);
                   finalTranscript = fullText;
                   triggerAnswer();
                 }
-              }, 650);
+              }, silenceDelayMs);
       }
     };
 
@@ -3537,7 +3537,7 @@ async function startWhisperMic() {
           finalTranscript = finalTranscript.trim();
           $('transcript').innerHTML = `<span class="t-final">${esc(finalTranscript)}</span>`;
           $('manualQ').value = finalTranscript;
-          setStatus('Transcript updated — auto-asking in 1.5s…');
+          setStatus(`Transcript updated — auto-asking in ${(silenceDelayMs / 1000).toFixed(1)}s…`);
           clearTimeout(silenceTimer);
           if (!isLongQuestionMode) {
             silenceTimer = setTimeout(() => {
@@ -3545,7 +3545,7 @@ async function startWhisperMic() {
                 submitOrQueue(finalTranscript);
                 finalTranscript = '';
               }
-            }, 1500);
+            }, silenceDelayMs);
           }
         } else {
           setStatus('No speech detected in chunk — listening…');
