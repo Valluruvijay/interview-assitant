@@ -338,6 +338,13 @@ strong { font-weight:600; color:var(--accent); }
   margin: 3px 0;
   font-weight: 500;
 }
+.teleprompter-card p, .teleprompter-card div:not(.tp-title) {
+  color: #f8fafc;
+  font-size: 12.5px;
+  line-height: 1.55;
+  margin: 5px 0;
+  font-weight: 450;
+}
 .teleprompter-card strong {
   color: #38bdf8;
 }
@@ -1300,9 +1307,13 @@ function renderMarkdown(md) {
       }
       
       const headingText = trimmed.replace(/^###?\s+/, '');
-      if (headingText.includes('🗣️') || /talking points/i.test(headingText)) {
+      if (headingText.includes('🗣️') || /talking points/i.test(headingText) || /say this/i.test(headingText)) {
         inCard = 'teleprompter';
-        html += '<div class="teleprompter-card"><div class="tp-title">🗣️ Quick Talking Points (Say Aloud)</div>';
+        const displayTitle = /say this/i.test(headingText) ? '🗣️ Say This (Natural Spoken Answer)' : '🗣️ Quick Talking Points (Say Aloud)';
+        html += '<div class="teleprompter-card"><div class="tp-title">' + displayTitle + '</div>';
+      } else if (headingText.includes('📌') || /cheat sheet/i.test(headingText)) {
+        inCard = 'cheatsheet';
+        html += '<div style="font-weight:700;margin:10px 0 4px;color:#38bdf8;font-size:12px;display:flex;align-items:center;gap:6px;border-bottom:1px solid rgba(56,189,248,0.25);padding-bottom:3px;"><span>📌</span> Cheat Sheet / Code</div>';
       } else if (headingText.includes('🔮') || /anticipated follow/i.test(headingText)) {
         inCard = 'followup';
         html += '<div class="followup-card"><div class="fp-title">🔮 Anticipated Follow-Ups</div>';
