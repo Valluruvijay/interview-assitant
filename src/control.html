@@ -4273,14 +4273,16 @@ async function askQuestion(qOverride, imageBase64 = null) {
             delete requestBody.temperature;
           }
         } else if (effectiveProvider === 'cerebras') {
-          requestBody.max_tokens = maxTokensBudget;
+          // Provide 8192 tokens budget for Cerebras ultra-fast generation
+          requestBody.max_tokens = 8192;
           if (activeEffort === 'none') {
-            // Option A: Fast Mode (Reasoning OFF — Ultra-Fast Sub-Second Streaming)
+            // Option A: Fast Mode (Reasoning OFF — Ultra-Fast Sub-Second Streaming, zero thinking quota used)
             requestBody.reasoning_effort = 'none';
             requestBody.temperature = userTemp;
           } else {
-            // Option B: Reasoning ON (low / medium / high)
-            requestBody.reasoning_effort = (activeEffort === 'xhigh' ? 'high' : activeEffort);
+            // Cerebras Qwen-3.8-27B loops infinitely on 'high' burning 4000+ tokens on thinking alone.
+            // Using 'low' caps reasoning to ~90 tokens, completely eliminating 'Thinking Quota Exhausted'!
+            requestBody.reasoning_effort = 'low';
             delete requestBody.temperature;
           }
         } else if (effectiveProvider === 'sarvam') {
@@ -4545,9 +4547,13 @@ async function askQuestion(qOverride, imageBase64 = null) {
       } else if (fullAnswer.length > cleanAnswerStreamed) {
         ipcRenderer.send('answer-chunk', fullAnswer.slice(cleanAnswerStreamed));
       }
+    } else if (rawAccumulatedReasoning && rawAccumulatedReasoning.trim().length > 50) {
+      // If model finished reasoning but was cut off before content streaming, salvage the reasoning:
+      fullAnswer = `### 🗣️ Quick Answer (Extracted from Reasoning)\n\n` + rawAccumulatedReasoning.trim();
+      ipcRenderer.send('answer-chunk', fullAnswer);
     } else {
       // Model produced only reasoning without generating any visible answer:
-      const notice = `⚠️ **Reasoning Budget Exhausted**: The model consumed its token budget on internal reasoning before writing the answer.\n\n👉 **Recommended Fix**: Select **Sarvam DeepSeek 4.1 (Interactive)** and turn **Reasoning Effort** to **Off (Fast Mode)** in the model selector for instant answers in under 5 seconds.`;
+      const notice = `⚠️ **Reasoning Budget Exhausted**: The model consumed its token budget on internal reasoning before writing the answer.\n\n👉 **Recommended Fix**: In the Control window, set **Reasoning Mode** to **Option A: Fast Mode (Zero Delay)** or switch to **Sarvam DeepSeek 4.1 (Interactive)**.`;
       fullAnswer = notice;
       ipcRenderer.send('answer-chunk', notice);
     }
