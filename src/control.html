@@ -3694,21 +3694,20 @@ function buildChatGPTSystemPrompt(question = '', useOverride = true) {
       p += `\n\n## 4. Output Format (Complete & Speakable)
 Keep internal reasoning minimal for fast latency. Always finish all applicable sections—never truncate.
 
-### 🗣️ Say This (45–60 sec natural spoken answer)
-Write **2 to 3 short, connected conversational paragraphs** (100–140 words total, plain prose—NO bullet points, NO tables, NO bolding). Make it a complete beginning-to-end answer:
-- **Intro**: Present role & core stack -> 1–2 concrete things I build day to day -> recent focus (Agentforce/CPQ/integrations).
-- **Technical / Concept / "X vs Y"**: Direct practical verdict -> how it actually works under the hood -> real trade-off or production gotcha from experience.
-- **Limits / Specs**: Why the limit exists (multi-tenancy) -> key numbers to mention -> how to bulkify/architect to prevent it.
-- **Project / Debugging**: Exact symptom or business problem -> step-by-step what I checked/built -> the fix and how I prevented it from coming back.
-- **Behavioral (STAR)**: Quick situation -> why it mattered / trade-off -> specific action I took -> concrete outcome and takeaway.
-- **Coding / LWC / SOQL**: 3–4 natural sentences explaining the approach, bulk/security safety, and edge cases while I type the code.
+### 🗣️ Say This (Natural Spoken Answer)
+Write in **ready-to-speak conversational plain prose (NO bullet points, NO tables, NO bolding)**, strictly adapting answer length to question complexity:
+- **Simple conceptual question**: Strictly **2–3 crisp sentences** (direct definition + practical everyday use).
+- **Technical explanation / Limits / "X vs Y"**: **3–5 sentences** (direct practical verdict -> how it works under the hood -> key limit or production gotcha).
+- **Scenario-based / Architectural question**: 3 connected conversational paragraphs covering **recommendation** (chosen architecture), **implementation** (Flow/Apex/LWC/Agentforce details), and **important considerations** (governor limits, sharing, recursion, or edge cases).
+- **Project / Debugging / Behavioral (STAR)**: Quick symptom/situation -> step-by-step action/fix -> concrete outcome and safeguard.
+- **Coding / SOQL question**: **2–3 natural sentences** explaining the approach, bulk/security safety (\`WITH USER_MODE\`), and edge cases to speak aloud while typing the code.
 
 ### 📌 Cheat Sheet / Code (Scan only if needed)
-- **Coding / SOQL**: Put the **exact compile-ready code (10–25 lines)** at the very top, followed by 2 short bullets (bulk/security check + edge case).
+- **Coding / SOQL**: Put the **exact compile-ready, compile-consistent code (10–25 lines)** at the very top, followed by 2 short bullets (bulk/security check + edge case).
 - **Difference / "X vs Y"**: Output a **clear, comprehensive Markdown comparison table based strictly on official Salesforce architecture and documentation**. Cover all critical dimensions: Feature / Core Mechanism, Sharing & Security Model, Lifecycle & Deletion Behavior, Governor Limits & Capacity, and Roll-up / Automation support. Follow with 1–2 real-world production gotchas.
 - **Limits / Specs (e.g., Governor Limits, Async Apex)**: Output a **complete, official Salesforce limits table** comparing **Synchronous vs Asynchronous** runtime execution (SOQL Queries: 100 vs 200, Query Rows: 50,000, DML Statements: 150, DML Rows: 10,000, CPU Time: 10s vs 60s, Heap Size: 6MB vs 12MB, Callout Limits: 100, and Async chaining rules).
-- **Technical / Architecture**: 3–5 high-impact technical bullets with exact Salesforce API names, system modes, and architectural trade-offs.
-- **Behavioral / Intro / Closing**: Omit this section completely to keep latency fast.
+- **Scenario / Technical / Architecture**: 3–5 high-impact technical bullets with exact Salesforce API names, system modes, and architectural trade-offs.
+- **Simple conceptual / Behavioral / Intro / Closing**: Omit this section completely to keep latency fast.
 `;
     }
   } else {
@@ -3738,21 +3737,20 @@ Write **2 to 3 short, connected conversational paragraphs** (100–140 words tot
 ## 4. Output Format (Complete & Speakable)
 Keep internal reasoning minimal for fast latency. Always finish all applicable sections—never truncate.
 
-### 🗣️ Say This (45–60 sec natural spoken answer)
-Write **2 to 3 short, connected conversational paragraphs** (100–140 words total, plain prose—NO bullet points, NO tables, NO bolding). Make it a complete beginning-to-end answer:
-- **Intro**: Present role & core stack -> 1–2 concrete things I build day to day -> recent focus (Agentforce/CPQ/integrations).
-- **Technical / Concept / "X vs Y"**: Direct practical verdict -> how it actually works under the hood -> real trade-off or production gotcha from experience.
-- **Limits / Specs**: Why the limit exists (multi-tenancy) -> key numbers to mention -> how to bulkify/architect to prevent it.
-- **Project / Debugging**: Exact symptom or business problem -> step-by-step what I checked/built -> the fix and how I prevented it from coming back.
-- **Behavioral (STAR)**: Quick situation -> why it mattered / trade-off -> specific action I took -> concrete outcome and takeaway.
-- **Coding / LWC / SOQL**: 3–4 natural sentences explaining the approach, bulk/security safety, and edge cases while I type the code.
+### 🗣️ Say This (Natural Spoken Answer)
+Write in **ready-to-speak conversational plain prose (NO bullet points, NO tables, NO bolding)**, strictly adapting answer length to question complexity:
+- **Simple conceptual question**: Strictly **2–3 crisp sentences** (direct definition + practical everyday use).
+- **Technical explanation / Limits / "X vs Y"**: **3–5 sentences** (direct practical verdict -> how it works under the hood -> key limit or production gotcha).
+- **Scenario-based / Architectural question**: 3 connected conversational paragraphs covering **recommendation** (chosen architecture), **implementation** (Flow/Apex/LWC/Agentforce details), and **important considerations** (governor limits, sharing, recursion, or edge cases).
+- **Project / Debugging / Behavioral (STAR)**: Quick symptom/situation -> step-by-step action/fix -> concrete outcome and safeguard.
+- **Coding / SOQL question**: **2–3 natural sentences** explaining the approach, bulk/security safety (\`WITH USER_MODE\`), and edge cases to speak aloud while typing the code.
 
 ### 📌 Cheat Sheet / Code (Scan only if needed)
-- **Coding / SOQL**: Put the **exact compile-ready code (10–25 lines)** at the very top, followed by 2 short bullets (bulk/security check + edge case).
+- **Coding / SOQL**: Put the **exact compile-ready, compile-consistent code (10–25 lines)** at the very top, followed by 2 short bullets (bulk/security check + edge case).
 - **Difference / "X vs Y"**: Output a **clear, comprehensive Markdown comparison table based strictly on official Salesforce architecture and documentation**. Cover all critical dimensions: Feature / Core Mechanism, Sharing & Security Model, Lifecycle & Deletion Behavior, Governor Limits & Capacity, and Roll-up / Automation support. Follow with 1–2 real-world production gotchas.
 - **Limits / Specs (e.g., Governor Limits, Async Apex)**: Output a **complete, official Salesforce limits table** comparing **Synchronous vs Asynchronous** runtime execution (SOQL Queries: 100 vs 200, Query Rows: 50,000, DML Statements: 150, DML Rows: 10,000, CPU Time: 10s vs 60s, Heap Size: 6MB vs 12MB, Callout Limits: 100, and Async chaining rules).
-- **Technical / Architecture**: 3–5 high-impact technical bullets with exact Salesforce API names, system modes, and architectural trade-offs.
-- **Behavioral / Intro / Closing**: Omit this section completely to keep latency fast.`;
+- **Scenario / Technical / Architecture**: 3–5 high-impact technical bullets with exact Salesforce API names, system modes, and architectural trade-offs.
+- **Simple conceptual / Behavioral / Intro / Closing**: Omit this section completely to keep latency fast.`;
   }
 
   if (jdTextData && (!useOverride || !chatgptPromptOverride.includes(jdTextData))) {
