@@ -3698,13 +3698,16 @@ Keep internal reasoning minimal for fast latency. Always finish all applicable s
 Write **2 to 3 short, connected conversational paragraphs** (100–140 words total, plain prose—NO bullet points, NO tables, NO bolding). Make it a complete beginning-to-end answer:
 - **Intro**: Present role & core stack -> 1–2 concrete things I build day to day -> recent focus (Agentforce/CPQ/integrations).
 - **Technical / Concept / "X vs Y"**: Direct practical verdict -> how it actually works under the hood -> real trade-off or production gotcha from experience.
+- **Limits / Specs**: Why the limit exists (multi-tenancy) -> key numbers to mention -> how to bulkify/architect to prevent it.
 - **Project / Debugging**: Exact symptom or business problem -> step-by-step what I checked/built -> the fix and how I prevented it from coming back.
 - **Behavioral (STAR)**: Quick situation -> why it mattered / trade-off -> specific action I took -> concrete outcome and takeaway.
 - **Coding / LWC / SOQL**: 3–4 natural sentences explaining the approach, bulk/security safety, and edge cases while I type the code.
 
 ### 📌 Cheat Sheet / Code (Scan only if needed)
 - **Coding / SOQL**: Put the **exact compile-ready code (10–25 lines)** at the very top, followed by 2 short bullets (bulk/security check + edge case).
-- **Technical / Architecture**: 3–4 ultra-short keyword bullets (exact API names, limits, or trade-offs I can drop if they dig deeper). No Markdown tables.
+- **Difference / "X vs Y"**: 1 compact 3-to-4 row Markdown comparison table contrasting core mechanics, lifecycle, and limits + 1 gotcha bullet.
+- **Limits / Specs (e.g., Governor Limits)**: 1 compact Markdown comparison table or specs list contrasting Sync vs Async limits (SOQL, DML, Heap, CPU, Callouts).
+- **Technical / Architecture**: 3–4 ultra-short keyword bullets (exact API names, limits, or trade-offs I can drop if they dig deeper).
 - **Behavioral / Intro / Closing**: Omit this section completely to keep latency fast.
 `;
     }
@@ -3739,13 +3742,16 @@ Keep internal reasoning minimal for fast latency. Always finish all applicable s
 Write **2 to 3 short, connected conversational paragraphs** (100–140 words total, plain prose—NO bullet points, NO tables, NO bolding). Make it a complete beginning-to-end answer:
 - **Intro**: Present role & core stack -> 1–2 concrete things I build day to day -> recent focus (Agentforce/CPQ/integrations).
 - **Technical / Concept / "X vs Y"**: Direct practical verdict -> how it actually works under the hood -> real trade-off or production gotcha from experience.
+- **Limits / Specs**: Why the limit exists (multi-tenancy) -> key numbers to mention -> how to bulkify/architect to prevent it.
 - **Project / Debugging**: Exact symptom or business problem -> step-by-step what I checked/built -> the fix and how I prevented it from coming back.
 - **Behavioral (STAR)**: Quick situation -> why it mattered / trade-off -> specific action I took -> concrete outcome and takeaway.
 - **Coding / LWC / SOQL**: 3–4 natural sentences explaining the approach, bulk/security safety, and edge cases while I type the code.
 
 ### 📌 Cheat Sheet / Code (Scan only if needed)
 - **Coding / SOQL**: Put the **exact compile-ready code (10–25 lines)** at the very top, followed by 2 short bullets (bulk/security check + edge case).
-- **Technical / Architecture**: 3–4 ultra-short keyword bullets (exact API names, limits, or trade-offs I can drop if they dig deeper). No Markdown tables.
+- **Difference / "X vs Y"**: 1 compact 3-to-4 row Markdown comparison table contrasting core mechanics, lifecycle, and limits + 1 gotcha bullet.
+- **Limits / Specs (e.g., Governor Limits)**: 1 compact Markdown comparison table or specs list contrasting Sync vs Async limits (SOQL, DML, Heap, CPU, Callouts).
+- **Technical / Architecture**: 3–4 ultra-short keyword bullets (exact API names, limits, or trade-offs I can drop if they dig deeper).
 - **Behavioral / Intro / Closing**: Omit this section completely to keep latency fast.`;
   }
 
