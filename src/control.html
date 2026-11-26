@@ -3988,7 +3988,9 @@ async function askQuestion(qOverride, imageBase64 = null) {
     imageBase64 = null;
   }
 
-  const detectedIntent = classifyQuestionIntent(question);
+  const isFollowUpTurn = !!isNextFollowUp;
+  const baseIntent = classifyQuestionIntent(question);
+  const detectedIntent = isFollowUpTurn ? `Follow-up · ${baseIntent}` : baseIntent;
   ipcRenderer.send('question-asked', { question, intent: detectedIntent, startTime: qStartTime });
   if (!sessionStart) { sessionStart = new Date().toISOString(); currentSessionQA = []; }
 
@@ -4016,6 +4018,11 @@ async function askQuestion(qOverride, imageBase64 = null) {
     isGenerating = false;
     $('askBtn').disabled = false;
     return;
+  }
+
+  if (isFollowUpTurn) {
+    isNextFollowUp = false;
+    ipcRenderer.send('followup-state-changed', false);
   }
 
   if (testMode) {
@@ -4063,35 +4070,42 @@ async function askQuestion(qOverride, imageBase64 = null) {
     const exchanges = memorySource.filter(x => x && x.question && x.answer);
     // Keep exactly the last 2 questions and answers for follow-up context with minimal token overhead
     let keepFrom = Math.max(0, exchanges.length - 2);
-    for (const x of exchanges.slice(keepFrom)) {
+    const recentExchanges = exchanges.slice(keepFrom);
+    recentExchanges.forEach((x, idx) => {
       let cleanAns = (x.answer || '')
         .replace(/<think>[\s\S]*?<\/think>/gi, '')
         .replace(/^<think>[\s\S]*/i, '')
         .trim();
       // Skip error placeholders or internal reasoning spills from previous questions
       if (cleanAns.startsWith('⚠️') || cleanAns.startsWith('The user wants a scenario-based') || cleanAns.startsWith('Let me think')) {
-        continue;
+        return;
       }
-      // Compact prior answers: extract Quick Talking Points if present (captures core thesis & mechanism without tables/code bloat)
-      if (cleanAns.includes('### 🗣️ Quick Talking Points') && cleanAns.includes('---')) {
+      const isLatestExchange = idx === recentExchanges.length - 1;
+      // Preserve fuller context on the immediately preceding answer when Follow-up mode is ON
+      const maxLen = (isFollowUpTurn && isLatestExchange) ? 1800 : 700;
+      if (!(isFollowUpTurn && isLatestExchange) && cleanAns.includes('### 🗣️ Quick Talking Points') && cleanAns.includes('---')) {
         const parts = cleanAns.split('---');
         cleanAns = parts[0].trim();
-      } else if (cleanAns.length > 700) {
-        cleanAns = cleanAns.slice(0, 650) + '\n... [Prior response summarized]';
+      } else if (cleanAns.length > maxLen) {
+        cleanAns = cleanAns.slice(0, maxLen - 50) + '\n... [Prior response summarized]';
       }
       if (cleanAns) {
         historyMessages.push({ role: 'user', content: x.question });
         historyMessages.push({ role: 'assistant', content: cleanAns });
       }
-    }
+    });
+
+    const followUpTag = (isFollowUpTurn && historyMessages.length > 0)
+      ? `\n[FOLLOW-UP TO PREVIOUS Q&A — answer ONLY this specific probe directly using the previous Q&A context, without repeating prior background or definitions.]`
+      : '';
 
     if (imageBase64) {
       const images = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
       if (['cerebras', 'gemini', 'gemini2', 'groq', 'chatgpt', 'deepseek', 'sarvam'].includes(effectiveProvider)) {
         const contentParts = [
           { type: 'text', text: images.length > 1 
-              ? `These ${images.length} screenshots are sequential parts of one question. Read all parts together, then answer what is asked. It may be a multiple-choice question, a coding problem, a diagram, or a form. If it is multiple choice, state the correct option with a one-line reason.`
-              : `Interviewer's question/screen: "${question}"` }
+              ? `These ${images.length} screenshots are sequential parts of one question. Read all parts together, then answer what is asked. It may be a multiple-choice question, a coding problem, a diagram, or a form. If it is multiple choice, state the correct option with a one-line reason.${followUpTag}`
+              : `Interviewer's question/screen: "${question}"${followUpTag}` }
         ];
         images.forEach(img => {
           contentParts.push({ type: 'image_url', image_url: { url: img } });
@@ -4102,7 +4116,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
         });
       } else {
         const contentParts = [
-          { type: 'text', text: `Interviewer's question/screen: "${question}"` }
+          { type: 'text', text: `Interviewer's question/screen: "${question}"${followUpTag}` }
         ];
         images.forEach(img => {
           const [prefix, data] = img.split(',');
@@ -4115,7 +4129,7 @@ async function askQuestion(qOverride, imageBase64 = null) {
         });
       }
     } else {
-      historyMessages.push({ role: 'user', content: `${question}\n\n[Detected Intent: ${detectedIntent}]` });
+      historyMessages.push({ role: 'user', content: `${question}\n\n[Detected Intent: ${detectedIntent}]${followUpTag}` });
     }
     let modelsToTry = [];
     const selectEl = document.getElementById('aiModelSelect');
@@ -4676,6 +4690,10 @@ function clearAll() {
   currentSessionQA = [];
   currentCandidateLog = [];
   cachedSessionSystemPrompt = null;
+  if (isNextFollowUp) {
+    isNextFollowUp = false;
+    ipcRenderer.send('followup-state-changed', false);
+  }
   setStatus('Cleared');
 }
 
