@@ -4404,9 +4404,9 @@ async function askQuestion(qOverride, imageBase64 = null) {
           if (requestBody.reasoning_effort !== undefined) {
             const effort = requestBody.reasoning_effort;
             delete requestBody.reasoning_effort;
-            if (effort !== 'none') {
-              requestBody.reasoning = { effort: effort === 'xhigh' ? 'high' : effort };
-            }
+            // Always forward reasoning.effort (including 'none') on /v1/responses so models like
+            // gpt-6-luna do not fall back to default reasoning and reject temperature.
+            requestBody.reasoning = { effort: effort === 'xhigh' ? 'high' : effort };
           }
           responsesModeActive = true;
         }
@@ -4542,8 +4542,12 @@ async function askQuestion(qOverride, imageBase64 = null) {
             // OpenAI Responses API event stream
             if (p.type === 'response.output_text.delta') {
               chunk = p.delta || '';
-            } else if (p.type === 'response.reasoning_summary_text.delta') {
-              if (!cleanAnswerStreamed) {
+            } else if (
+              p.type === 'response.reasoning_summary_text.delta' ||
+              (p.type === 'response.output_item.added' && p.item?.type === 'reasoning')
+            ) {
+              if (p.delta) rawAccumulatedReasoning += p.delta;
+              if (!cleanAnswerStreamed && !isCurrentlyReasoning) {
                 isCurrentlyReasoning = true;
                 setStatus('🤔 Reasoning in progress…');
                 ipcRenderer.send('reasoning-status', { isReasoning: true });
