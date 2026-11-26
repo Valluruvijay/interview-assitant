@@ -1399,8 +1399,28 @@ function renderMarkdown(md) {
   const lines = processed.split('\n');
   let html = '';
   let inList = false;
-  let inCard = null; // 'teleprompter' | 'followup' | null
+  let inCard = null; // 'teleprompter' | 'cheatsheet' | 'followup' | null
+  let seenSectionHeader = false;
   let tableBuffer = [];
+
+  function closeList() {
+    if (inList) { html += '</ul>'; inList = false; }
+  }
+
+  function closeCard() {
+    // Only teleprompter and followup open a wrapping card <div>; cheatsheet renders a standalone banner.
+    if (inCard === 'teleprompter' || inCard === 'followup') { html += '</div>'; }
+    inCard = null;
+  }
+
+  function ensureAutoTeleprompter() {
+    // Wrap opening spoken prose/bullets in the teleprompter card even if the model omits `### 🗣️ Say This`.
+    if (!seenSectionHeader && !inCard) {
+      inCard = 'teleprompter';
+      seenSectionHeader = true;
+      html += '<div class="teleprompter-card"><div class="tp-title">🗣️ Say This (Speak Aloud)</div>';
+    }
+  }
 
   function flushTable() {
     if (tableBuffer.length > 0) {
@@ -1416,38 +1436,50 @@ function renderMarkdown(md) {
     line = line.replace(/`([^`]+)`/g, '<code>$1</code>');
     
     const trimmed = line.trim();
+    if (/^#{1,4}$/.test(trimmed)) continue;
 
     // Check if line is a table row (| col1 | col2 |)
     if (trimmed.startsWith('|') && trimmed.includes('|', 1)) {
-      if (inList) { html += '</ul>'; inList = false; }
+      closeList();
+      if (inCard === 'teleprompter') closeCard();
+      seenSectionHeader = true;
       tableBuffer.push(line);
       continue;
     } else {
       flushTable();
     }
+
+    const cleanHeading = trimmed
+      .replace(/^#{1,4}\s+/, '')
+      .replace(/<\/?strong>/gi, '')
+      .trim();
+    const isExplicitHeading = /^#{2,4}\s+/.test(trimmed);
+    const isSayThisHeading = /^🗣️/.test(cleanHeading) || /^(?:say this|quick talking points)(?:\s*\([^)]*\))?:?$/i.test(cleanHeading);
+    const isCheatSheetHeading = /^📌/.test(cleanHeading) || /^cheat sheet(?:\s*\/\s*code)?(?:\s*\([^)]*\))?:?$/i.test(cleanHeading);
+    const isFollowUpHeading = /^🔮/.test(cleanHeading) || /^anticipated follow-?ups?:?$/i.test(cleanHeading);
     
-    if (trimmed.startsWith('### ') || trimmed.startsWith('## ') || trimmed === '---') {
-      if (inList) { html += '</ul>'; inList = false; }
-      if (inCard) { html += '</div>'; inCard = null; }
+    if (trimmed === '---' || isExplicitHeading || isSayThisHeading || isCheatSheetHeading || isFollowUpHeading) {
+      closeList();
+      closeCard();
+      seenSectionHeader = true;
       
       if (trimmed === '---') {
         html += '<hr style="border:none;border-top:1px solid rgba(255,255,255,0.08);margin:6px 0;">';
         continue;
       }
       
-      const headingText = trimmed.replace(/^###?\s+/, '');
-      if (headingText.includes('🗣️') || /talking points/i.test(headingText) || /say this/i.test(headingText)) {
+      if (isSayThisHeading) {
         inCard = 'teleprompter';
-        const displayTitle = /say this/i.test(headingText) ? '🗣️ Say This (Natural Spoken Answer)' : '🗣️ Quick Talking Points (Say Aloud)';
+        const displayTitle = /talking points/i.test(cleanHeading) ? '🗣️ Quick Talking Points (Say Aloud)' : '🗣️ Say This (Speak Aloud)';
         html += '<div class="teleprompter-card"><div class="tp-title">' + displayTitle + '</div>';
-      } else if (headingText.includes('📌') || /cheat sheet/i.test(headingText)) {
+      } else if (isCheatSheetHeading) {
         inCard = 'cheatsheet';
         html += '<div style="font-weight:700;margin:10px 0 4px;color:#38bdf8;font-size:12px;display:flex;align-items:center;gap:6px;border-bottom:1px solid rgba(56,189,248,0.25);padding-bottom:3px;"><span>📌</span> Cheat Sheet / Code</div>';
-      } else if (headingText.includes('🔮') || /anticipated follow/i.test(headingText)) {
+      } else if (isFollowUpHeading) {
         inCard = 'followup';
         html += '<div class="followup-card"><div class="fp-title">🔮 Anticipated Follow-Ups</div>';
       } else {
-        html += '<div style="font-weight:700;margin:6px 0 3px;color:#1D9E75;font-size:13px;">' + headingText + '</div>';
+        html += '<div style="font-weight:700;margin:6px 0 3px;color:#1D9E75;font-size:13px;">' + cleanHeading + '</div>';
       }
     }
     else if (/^[-*•]\s/.test(trimmed)) {
@@ -1457,37 +1489,42 @@ function renderMarkdown(md) {
         const encodedQ = encodeURIComponent(cleanQ);
         html += '<div class="followup-item"><span>' + trimmed + '</span> <button class="ask-pill" data-q="' + encodedQ + '" onclick="sendFollowUpFromPill(this)">⚡ Ask</button></div>';
       } else {
+        ensureAutoTeleprompter();
         if (!inList) { html += '<ul style="margin:3px 0;padding-left:16px;">'; inList = true; }
         html += '<li style="margin:2px 0;">' + trimmed.replace(/^[-*•]\s+/, '') + '</li>';
       }
     }
     else if (/^\d+[\.\)]\s/.test(trimmed)) {
-      if (inList) { html += '</ul>'; inList = false; }
+      closeList();
       if (inCard === 'followup') {
         const rawQ = trimmed.replace(/^\d+[\.\)]\s*/, '').replace(/<[^>]+>/g, '').trim();
         const cleanQ = rawQ.replace(/→.*$/, '').trim();
         const encodedQ = encodeURIComponent(cleanQ);
         html += '<div class="followup-item"><span>' + trimmed + '</span> <button class="ask-pill" data-q="' + encodedQ + '" onclick="sendFollowUpFromPill(this)">⚡ Ask</button></div>';
       } else {
+        ensureAutoTeleprompter();
         html += '<div style="margin:2px 0;padding-left:4px;">' + trimmed + '</div>';
       }
     }
     else if (trimmed.startsWith('<pre>') || trimmed.startsWith('%%CODEBLOCK')) {
-      if (inList) { html += '</ul>'; inList = false; }
+      closeList();
+      if (inCard === 'teleprompter') closeCard();
+      seenSectionHeader = true;
       html += line;
     }
     else if (trimmed === '') {
-      if (inList) { html += '</ul>'; inList = false; }
+      closeList();
       html += '<div style="height:4px;"></div>';
     }
     else {
-      if (inList) { html += '</ul>'; inList = false; }
+      closeList();
+      ensureAutoTeleprompter();
       html += '<div style="margin:2px 0;">' + line + '</div>';
     }
   }
   flushTable();
-  if (inList) html += '</ul>';
-  if (inCard) html += '</div>';
+  closeList();
+  closeCard();
 
   codeBlocks.forEach((block, i) => {
     html = html.replace('%%CODEBLOCK' + i + '%%', () => block);
