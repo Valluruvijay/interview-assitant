@@ -280,9 +280,74 @@ kbd { font-size:10px; background:rgba(255,255,255,0.07); border:1px solid rgba(2
 @keyframes blink { 50%{opacity:0} }
 
 
-pre { background:rgba(0,0,0,0.35); padding:8px; border-radius:6px; overflow-x:auto; font-family:Consolas, monospace; font-size:0.9em; margin:6px 0; border:1px solid rgba(255,255,255,0.08); }
-code { font-family:Consolas, monospace; background:rgba(0,0,0,0.35); padding:2px 4px; border-radius:4px; font-size:0.9em; color:#e0c088; }
+.bubble-content {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+.q-copy-icon {
+  -webkit-app-region: no-drag;
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0 3px;
+  font-size: 11px;
+  line-height: 1;
+  color: rgba(255,255,255,0.45);
+  cursor: pointer;
+  transition: transform 0.12s, color 0.15s;
+  user-select: none;
+}
+.q-copy-icon:hover { color: #4ade80; transform: scale(1.12); }
+.q-copy-icon.saved { color: #4ade80; }
+
+pre { background:rgba(0,0,0,0.35); padding:8px; border-radius:6px; overflow-x:auto; font-family:Consolas, monospace; font-size:0.9em; margin:6px 0; border:1px solid rgba(255,255,255,0.08); -webkit-user-select:text; user-select:text; }
+code { font-family:Consolas, monospace; background:rgba(0,0,0,0.35); padding:2px 4px; border-radius:4px; font-size:0.9em; color:#e0c088; -webkit-user-select:text; user-select:text; }
 pre code { background:transparent; padding:0; color:#d4d4d4; }
+.code-block-wrap {
+  -webkit-app-region: no-drag;
+  background: rgba(0,0,0,0.42);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  margin: 6px 0;
+  overflow: hidden;
+}
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 8px;
+  background: rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  user-select: none;
+}
+.code-lang {
+  font-family: Consolas, monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: rgba(255,255,255,0.45);
+}
+.code-copy-btn {
+  -webkit-app-region: no-drag;
+  background: rgba(29,158,117,0.12);
+  border: 1px solid rgba(29,158,117,0.3);
+  border-radius: 4px;
+  color: #4ade80;
+  font-size: 9.5px;
+  padding: 1px 7px;
+  cursor: pointer;
+  font-family: 'Segoe UI', sans-serif;
+  transition: all 0.15s;
+}
+.code-copy-btn:hover { background: rgba(29,158,117,0.25); color: #fff; }
+.code-copy-btn.saved { background: rgba(34,197,94,0.25); border-color: #22c55e; color: #4ade80; }
+.code-block-wrap pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
 strong { font-weight:600; color:var(--accent); }
 
 
@@ -706,8 +771,69 @@ strong { font-weight:600; color:var(--accent); }
 </div>
 
 <script>
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, clipboard } = require('electron');
 const $ = id => document.getElementById(id);
+
+function copyToClipboard(text, toastLabel = 'Copied!', btnEl = null, doneText = null) {
+  if (!text) return;
+  try {
+    clipboard.writeText(String(text));
+    showOverlayToast('📋 ' + toastLabel);
+    if (btnEl) {
+      const orig = btnEl.getAttribute('data-orig-label') || btnEl.textContent;
+      btnEl.setAttribute('data-orig-label', orig);
+      btnEl.textContent = doneText || (orig.trim() === '📋' ? '✓' : '✓ Copied');
+      btnEl.classList.add('saved');
+      clearTimeout(btnEl._copyResetTimer);
+      btnEl._copyResetTimer = setTimeout(() => {
+        btnEl.textContent = orig;
+        btnEl.classList.remove('saved');
+      }, 1500);
+    }
+  } catch (e) {
+    console.error('[Copy] Clipboard write failed:', e);
+    showOverlayToast('⚠ Copy failed');
+  }
+}
+
+function copyCodeBlock(btn) {
+  const wrap = btn && btn.closest('.code-block-wrap');
+  const codeEl = wrap && wrap.querySelector('pre code');
+  if (!codeEl) return;
+  copyToClipboard(codeEl.textContent, 'Code copied!', btn, '✓ Copied');
+}
+
+// Right-click anywhere in overlay copies highlighted text (or code block / bubble under cursor)
+// via Electron clipboard without stealing OS foreground focus when Shield is ON.
+document.addEventListener('contextmenu', (e) => {
+  const selText = window.getSelection ? window.getSelection().toString() : '';
+  if (selText && selText.trim().length > 0) {
+    e.preventDefault();
+    copyToClipboard(selText, 'Selection copied!');
+    return;
+  }
+  const preEl = e.target && e.target.closest ? e.target.closest('pre') : null;
+  if (preEl) {
+    const codeEl = preEl.querySelector('code');
+    const txt = codeEl ? codeEl.textContent : preEl.textContent;
+    if (txt && txt.trim()) {
+      e.preventDefault();
+      copyToClipboard(txt, 'Code copied!');
+      return;
+    }
+  }
+  const bubbleEl = e.target && e.target.closest ? e.target.closest('.bubble') : null;
+  if (bubbleEl) {
+    const contentEl = bubbleEl.querySelector('.bubble-content');
+    if (contentEl && contentEl.innerText && contentEl.innerText.trim()) {
+      e.preventDefault();
+      copyToClipboard(
+        contentEl.innerText.trim(),
+        bubbleEl.classList.contains('bubble-q') ? 'Question copied!' : 'Answer copied!'
+      );
+    }
+  }
+});
 
 // ── TOAST & LIVE MODEL SWITCHER ─────────────────────────
 function testLiveAiQuestion() {
@@ -1256,16 +1382,19 @@ function renderMarkdown(md) {
   if (!md) return '';
   
   const codeBlocks = [];
-  let processed = md.replace(/```([\s\S]*?)```/g, (match, code) => {
-    codeBlocks.push('<pre><code>' + escapeHtml(code) + '</code></pre>');
+  let processed = md.replace(/```(?:([a-zA-Z0-9_+-]+)[ \t]*\r?\n)?([\s\S]*?)```/g, (match, lang, code) => {
+    const cleanCode = String(code || '').replace(/^\r?\n+|\r?\n+$/g, '');
+    const langTag = lang ? `<span class="code-lang">${escapeHtml(lang)}</span>` : '<span class="code-lang">code</span>';
+    codeBlocks.push(
+      `<div class="code-block-wrap">` +
+      `<div class="code-block-header">${langTag}<button type="button" class="code-copy-btn" onclick="copyCodeBlock(this)" title="Copy code">📋 Copy</button></div>` +
+      `<pre><code>${escapeHtml(cleanCode)}</code></pre>` +
+      `</div>`
+    );
     return '%%CODEBLOCK' + (codeBlocks.length - 1) + '%%';
   });
   
   processed = escapeHtml(processed);
-  
-  codeBlocks.forEach((block, i) => {
-    processed = processed.replace('%%CODEBLOCK' + i + '%%', block);
-  });
   
   const lines = processed.split('\n');
   let html = '';
@@ -1343,7 +1472,7 @@ function renderMarkdown(md) {
         html += '<div style="margin:2px 0;padding-left:4px;">' + trimmed + '</div>';
       }
     }
-    else if (trimmed.startsWith('<pre>')) {
+    else if (trimmed.startsWith('<pre>') || trimmed.startsWith('%%CODEBLOCK')) {
       if (inList) { html += '</ul>'; inList = false; }
       html += line;
     }
@@ -1359,6 +1488,10 @@ function renderMarkdown(md) {
   flushTable();
   if (inList) html += '</ul>';
   if (inCard) html += '</div>';
+
+  codeBlocks.forEach((block, i) => {
+    html = html.replace('%%CODEBLOCK' + i + '%%', () => block);
+  });
   
   return html;
 }
@@ -1489,6 +1622,17 @@ ipcRenderer.on('show-question', (_, qData) => {
   }
   qLabel.appendChild(qTimerBadge);
 
+  const qCopyBtn = document.createElement('button');
+  qCopyBtn.type = 'button';
+  qCopyBtn.className = 'q-copy-icon';
+  qCopyBtn.textContent = '📋';
+  qCopyBtn.title = 'Copy question';
+  qCopyBtn.onclick = (e) => {
+    e.stopPropagation();
+    copyToClipboard(q, 'Question copied!', qCopyBtn, '✓');
+  };
+  qLabel.appendChild(qCopyBtn);
+
   const qContent = document.createElement('div');
   qContent.className = 'bubble-content';
   qContent.innerHTML = escapeHtml(q);
@@ -1574,9 +1718,9 @@ ipcRenderer.on('show-question', (_, qData) => {
     }
   });
 
-  // Double-clicking answer bubble also jumps to question
+  // Double-clicking answer header jumps to question (allow word double-click selection in body)
   aBubble.ondblclick = (e) => {
-    if (e.target.closest('pre') || e.target.closest('code') || e.target.closest('button')) return;
+    if (!e.target.closest('.bubble-label') || e.target.closest('button')) return;
     scrollToCurrentQuestion(true);
   };
 
@@ -1756,8 +1900,8 @@ ipcRenderer.on('answer-done', () => {
   qaCount++;
   $('qCount').textContent = qaCount + ' Q&A' + (qaCount !== 1 ? 's' : '');
 
-  // Add bookmark button to the pair
-  if (currentPair) {
+  // Add bookmark & copy buttons to the pair
+  if (currentPair && !currentPair.querySelector('.bubble-actions') && (currentA || currentQ)) {
     const actions = document.createElement('div');
     actions.className = 'bubble-actions';
     const bkBtn = document.createElement('button');
@@ -1769,8 +1913,30 @@ ipcRenderer.on('answer-done', () => {
       bkBtn.textContent = '\u2713 Saved';
       bkBtn.classList.add('saved');
     };
+
+    const copyAnsBtn = document.createElement('button');
+    copyAnsBtn.className = 'bk-btn';
+    copyAnsBtn.textContent = '📋 Copy';
+    copyAnsBtn.title = 'Copy full answer';
+    const ansEl = currentAnswerContent;
+    copyAnsBtn.onclick = () => {
+      const txt = savedA || (ansEl ? ansEl.innerText : '');
+      copyToClipboard(txt, 'Answer copied!', copyAnsBtn, '✓ Copied');
+    };
+
     actions.appendChild(bkBtn);
+    actions.appendChild(copyAnsBtn);
     currentPair.appendChild(actions);
+  }
+});
+
+// When Anti-Tab Switch Shield is OFF (Alt+T), selecting text in chat allows native Ctrl+C too
+$('chatContainer')?.addEventListener('mouseup', () => {
+  if (typeof antiTabSwitchShieldActive !== 'undefined' && !antiTabSwitchShieldActive) {
+    const sel = window.getSelection ? window.getSelection().toString() : '';
+    if (sel && sel.trim().length > 0) {
+      ipcRenderer.send('overlay-request-focus');
+    }
   }
 });
 
