@@ -229,6 +229,29 @@ async function extractReferenceFile(filePath) {
   return { ...base, warning: 'Image attached. OCR is not available in this local build, so only filename metadata is used.' };
 }
 
+// Apply WDA_EXCLUDEFROMCAPTURE cleanly whenever a window is created, shown, or restyled.
+function applyContentProtection(win) {
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.setContentProtection(true);
+  } catch (e) {
+    console.warn('[Stealth] setContentProtection failed:', e.message);
+  }
+}
+
+function showControlWindowSafe(shouldFocus = false) {
+  if (!controlWin || controlWin.isDestroyed()) return;
+  applyContentProtection(controlWin);
+  if (shouldFocus) {
+    controlWin.show();
+    controlWin.focus();
+  } else {
+    controlWin.showInactive();
+  }
+  controlWin.setSkipTaskbar(false);
+  applyContentProtection(controlWin);
+}
+
 function createOverlay() {
   const { width } = screen.getPrimaryDisplay().workAreaSize;
   const settings = loadSettings();
@@ -260,7 +283,8 @@ function createOverlay() {
     }
   });
 
-  overlayWin.setContentProtection(true);
+  applyContentProtection(overlayWin);
+  overlayWin.setTitle('');
   overlayWin.setAlwaysOnTop(true, 'screen-saver', 1);
   currentOpacity = settings.opacity || 0.92;
   overlayWin.setOpacity(currentOpacity);
@@ -298,6 +322,7 @@ function createOverlay() {
   // Do NOT call hide() on it: a hide -> show cycle leaves a non-activating
   // window without mouse input.
   overlayWin.webContents.on('did-finish-load', () => {
+    applyContentProtection(overlayWin);
     safeSend(overlayWin, 'auto-send-state', lastAutoSendState);
     safeSend(overlayWin, 'anti-tab-shield-state', antiTabSwitchShield);
     overlayVisible = false;
@@ -327,6 +352,7 @@ function setOverlayFocusable(focusable) {
   try {
     overlayWin.setFocusable(focusable);
     overlayWin.setSkipTaskbar(true);
+    applyContentProtection(overlayWin);
   } catch (e) {
     console.warn('[Focus] setFocusable failed:', e.message);
   }
@@ -356,6 +382,7 @@ function showOverlay() {
   overlayWin.setIgnoreMouseEvents(false);
   overlayWin.setOpacity(currentOpacity);
   overlayWin.showInactive();
+  applyContentProtection(overlayWin);
 }
 
 // Hiding the overlay must NOT call hide(): a hide -> show cycle permanently
@@ -399,6 +426,9 @@ function createControl() {
     }
   });
 
+  applyContentProtection(controlWin);
+  controlWin.setTitle('');
+
   // Grant ALL permissions automatically — mic, camera, notifications, etc.
   controlWin.webContents.session.setPermissionRequestHandler((wc, permission, callback) => {
     callback(true);
@@ -424,14 +454,18 @@ function createControl() {
 
   controlWin.once('ready-to-show', () => {
     if (!controlWin || controlWin.isDestroyed()) return;
+    applyContentProtection(controlWin);
     controlWin.show();
+    applyContentProtection(controlWin);
     controlWin.focus();
   });
 
   // Guarantee window is always shown even if ready-to-show event is delayed
   setTimeout(() => {
     if (controlWin && !controlWin.isDestroyed() && !controlWin.isVisible()) {
+      applyContentProtection(controlWin);
       controlWin.show();
+      applyContentProtection(controlWin);
       controlWin.focus();
     }
   }, 1000);
@@ -458,9 +492,7 @@ if (!isPrimaryInstance) {
   app.on('second-instance', () => {
     if (controlWin && !controlWin.isDestroyed()) {
       if (controlWin.isMinimized()) controlWin.restore();
-      controlWin.setSkipTaskbar(false);
-      controlWin.show();
-      controlWin.focus();
+      showControlWindowSafe(true);
     } else {
       createControl();
     }
@@ -485,11 +517,15 @@ if (!isPrimaryInstance) {
       });
       powerMonitor.on('resume', () => {
         console.log('[PowerMonitor] System resumed from sleep/standby');
+        applyContentProtection(overlayWin);
+        applyContentProtection(controlWin);
         safeSend(controlWin, 'system-power-resume');
         safeSend(overlayWin, 'system-power-resume');
       });
       powerMonitor.on('unlock-screen', () => {
         console.log('[PowerMonitor] System screen unlocked');
+        applyContentProtection(overlayWin);
+        applyContentProtection(controlWin);
         safeSend(controlWin, 'system-power-resume');
         safeSend(overlayWin, 'system-power-resume');
       });
@@ -515,8 +551,7 @@ function toggleControlPanel() {
       }
     } else {
       // Bring Control Panel to front
-      controlWin.showInactive();
-      controlWin.setSkipTaskbar(false);
+      showControlWindowSafe(false);
     }
   } else {
     createControl();
@@ -786,10 +821,7 @@ ipcMain.on('hide-overlay', () => {
 });
 
 ipcMain.on('show-control-window', () => {
-  if (controlWin && !controlWin.isDestroyed()) {
-    controlWin.showInactive();
-    controlWin.setSkipTaskbar(false);
-  }
+  showControlWindowSafe(false);
 });
 
 ipcMain.on('move-overlay-to-display', (_, displayIndex) => {
@@ -797,6 +829,7 @@ ipcMain.on('move-overlay-to-display', (_, displayIndex) => {
   if (displayIndex < displays.length) {
     const d = displays[displayIndex];
     overlayWin?.setPosition(d.bounds.x + d.bounds.width - 460, d.bounds.y + 20);
+    applyContentProtection(overlayWin);
   }
 });
 
@@ -805,8 +838,7 @@ ipcMain.on('end-session-from-overlay', () => {
     setOverlayVisible(false);
   }
   if (controlWin && !controlWin.isDestroyed()) {
-    controlWin.showInactive();
-    controlWin.setSkipTaskbar(false);
+    showControlWindowSafe(false);
     safeSend(controlWin, 'end-session-remote');
   }
 });
