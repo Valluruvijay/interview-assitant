@@ -32,6 +32,7 @@ if (typeof globalThis.Path2D === 'undefined') {
 const { app, BrowserWindow, ipcMain, globalShortcut, screen, shell, dialog, session, powerMonitor, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { createMobileMirror } = require('./mobileServer');
 
 let appSuspensionBlockerId = null;
 
@@ -53,6 +54,7 @@ let controlWin = null;
 let currentOpacity = 0.92;
 let overlayVisible = true;
 let antiTabSwitchShield = true; // Solution C: Strict non-activating overlay
+let mobileMirror = null;
 
 const appDataDir = app.getPath('appData');
 const userDataPath = path.join(appDataDir, 'interviewai-pro');
@@ -398,6 +400,7 @@ function setOverlayVisible(visible) {
   if (!overlayWin || overlayWin.isDestroyed()) return;
   overlayVisible = visible;
   if (visible) showOverlay(); else hideOverlay();
+  mobileMirror?.updateState({ overlayVisible });
   if (controlWin && !controlWin.isDestroyed()) {
     safeSend(controlWin, 'overlay-visibility', visible);
   }
@@ -509,6 +512,39 @@ if (!isPrimaryInstance) {
     createControl();
     registerShortcuts();
 
+    mobileMirror = createMobileMirror({
+      onClientsChanged: (count) => safeSend(controlWin, 'mobile-mirror-clients', count),
+      onAction: (msg) => {
+        if (!msg || !msg.action) return;
+        if (msg.action === 'ask') {
+          const q = typeof msg.question === 'string' ? msg.question.trim() : '';
+          if (q) safeSend(controlWin, 'ask-followup', q);
+        } else if (msg.action === 'trigger-answer') {
+          safeSend(controlWin, 'force-trigger-answer');
+          safeSend(overlayWin, 'user-triggered-answer');
+        } else if (msg.action === 'send-pending') {
+          safeSend(controlWin, 'send-pending-question');
+          safeSend(overlayWin, 'user-triggered-answer');
+        } else if (msg.action === 'discard-pending') {
+          safeSend(controlWin, 'discard-pending-question');
+        } else if (msg.action === 'capture-screen') {
+          safeSend(controlWin, 'capture-screen-trigger');
+          safeSend(overlayWin, 'user-triggered-answer');
+        } else if (msg.action === 'toggle-followup') {
+          safeSend(controlWin, 'toggle-followup-remote');
+        } else if (msg.action === 'toggle-overlay') {
+          setOverlayVisible(!overlayVisible);
+        } else if (msg.action === 'clear') {
+          safeSend(overlayWin, 'answer-clear');
+          safeSend(controlWin, 'abort-generation');
+          mobileMirror?.onAnswerClear();
+        }
+      }
+    });
+    mobileMirror.start().catch((err) => {
+      console.warn('[MobileMirror] Startup failed:', err.message);
+    });
+
     if (powerMonitor) {
       powerMonitor.on('suspend', () => {
         console.log('[PowerMonitor] System is suspending (entering sleep/standby)...');
@@ -577,17 +613,30 @@ ipcMain.on('force-trigger-answer', () => {
   safeSend(overlayWin, 'user-triggered-answer');
 });
 ipcMain.on('switch-overlay-model', (_, data) => safeSend(controlWin, 'switch-overlay-model', data));
-ipcMain.on('sync-active-model', (_, data) => safeSend(overlayWin, 'sync-active-model', data));
+ipcMain.on('sync-active-model', (_, data) => {
+  safeSend(overlayWin, 'sync-active-model', data);
+  mobileMirror?.updateState({ model: data || {} });
+});
 
 // Pending-question confirm flow (Auto-send OFF)
 let lastAutoSendState = true;
 ipcMain.on('auto-send-state', (_, enabled) => {
   lastAutoSendState = enabled !== false;
   safeSend(overlayWin, 'auto-send-state', lastAutoSendState);
+  mobileMirror?.updateState({ autoSend: lastAutoSendState });
 });
-ipcMain.on('pending-question', (_, data) => safeSend(overlayWin, 'pending-question', data));
-ipcMain.on('pending-question-rejected', (_, data) => safeSend(overlayWin, 'pending-question-rejected', data));
-ipcMain.on('pending-question-cleared', () => safeSend(overlayWin, 'pending-question-cleared'));
+ipcMain.on('pending-question', (_, data) => {
+  safeSend(overlayWin, 'pending-question', data);
+  mobileMirror?.onPendingQuestion(data);
+});
+ipcMain.on('pending-question-rejected', (_, data) => {
+  safeSend(overlayWin, 'pending-question-rejected', data);
+  mobileMirror?.onPendingRejected(data);
+});
+ipcMain.on('pending-question-cleared', () => {
+  safeSend(overlayWin, 'pending-question-cleared');
+  mobileMirror?.onPendingCleared();
+});
 ipcMain.on('send-pending-question', () => {
   safeSend(controlWin, 'send-pending-question');
   safeSend(overlayWin, 'user-triggered-answer');
@@ -740,18 +789,34 @@ ipcMain.on('exit-stealth-mode', () => {
   }
 });
 
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  mobileMirror?.stop().catch(() => {});
+});
 app.on('window-all-closed', () => app.quit());
 
-ipcMain.on('question-asked', (_, q) => safeSend(overlayWin, 'show-question', q));
+ipcMain.on('question-asked', (_, q) => {
+  safeSend(overlayWin, 'show-question', q);
+  mobileMirror?.onQuestionAsked(q);
+});
 ipcMain.on('candidate-spoke', (_, text) => safeSend(overlayWin, 'candidate-spoke', text));
 ipcMain.on('candidate-interim', (_, text) => safeSend(overlayWin, 'candidate-interim', text));
-ipcMain.on('interviewer-interim', (_, text) => safeSend(overlayWin, 'interviewer-interim', text));
-ipcMain.on('answer-chunk', (_, chunk) => safeSend(overlayWin, 'answer-chunk', chunk));
-ipcMain.on('answer-done', () => safeSend(overlayWin, 'answer-done'));
+ipcMain.on('interviewer-interim', (_, text) => {
+  safeSend(overlayWin, 'interviewer-interim', text);
+  mobileMirror?.onInterviewerInterim(text);
+});
+ipcMain.on('answer-chunk', (_, chunk) => {
+  safeSend(overlayWin, 'answer-chunk', chunk);
+  mobileMirror?.onAnswerChunk(chunk);
+});
+ipcMain.on('answer-done', () => {
+  safeSend(overlayWin, 'answer-done');
+  mobileMirror?.onAnswerDone();
+});
 ipcMain.on('answer-clear', () => {
   safeSend(overlayWin, 'answer-clear');
   safeSend(controlWin, 'abort-generation');
+  mobileMirror?.onAnswerClear();
 });
 ipcMain.on('abort-generation', () => safeSend(controlWin, 'abort-generation'));
 ipcMain.on('force-trigger-answer', () => {
@@ -847,6 +912,7 @@ ipcMain.on('end-session-from-overlay', () => {
 ipcMain.on('toggle-mic-from-overlay', () => safeSend(controlWin, 'toggle-mic-remote'));
 ipcMain.on('mic-state-changed', (_, isListening) => {
   safeSend(overlayWin, 'mic-state-changed', isListening);
+  mobileMirror?.updateState({ micListening: !!isListening });
   try {
     if (powerSaveBlocker) {
       if (isListening) {
@@ -873,7 +939,10 @@ ipcMain.on('long-q-state-changed', (_, state) => safeSend(overlayWin, 'long-q-st
 
 // Follow-up Toggle from Overlay
 ipcMain.on('toggle-followup-from-overlay', () => safeSend(controlWin, 'toggle-followup-remote'));
-ipcMain.on('followup-state-changed', (_, state) => safeSend(overlayWin, 'followup-state-changed', state));
+ipcMain.on('followup-state-changed', (_, state) => {
+  safeSend(overlayWin, 'followup-state-changed', state);
+  mobileMirror?.updateState({ followUp: !!state });
+});
 
 // Auto-send Toggle from Overlay
 ipcMain.on('toggle-autosend-from-overlay', () => safeSend(controlWin, 'toggle-autosend-remote'));
@@ -1071,6 +1140,7 @@ ipcMain.on('minimize-control', () => {
 });
 ipcMain.on('close-app', () => {
   console.log('[MAIN] close-app IPC was invoked');
+  mobileMirror?.stop().catch(() => {});
   if (overlayWin && !overlayWin.isDestroyed()) {
     try { overlayWin.destroy(); } catch (_) {}
   }
@@ -1079,6 +1149,26 @@ ipcMain.on('close-app', () => {
   }
   app.exit(0);
 });
-ipcMain.on('reasoning-status', (_, data) => safeSend(overlayWin, 'reasoning-status', data));
+ipcMain.on('reasoning-status', (_, data) => {
+  safeSend(overlayWin, 'reasoning-status', data);
+  mobileMirror?.onReasoningStatus(data);
+});
 ipcMain.on('overlay-theme', (_, theme) => safeSend(overlayWin, 'set-theme', theme));
 ipcMain.on('overlay-fontsize', (_, size) => safeSend(overlayWin, 'set-fontsize', size));
+
+ipcMain.handle('get-mobile-mirror-info', async (_, preferredIp) => {
+  if (!mobileMirror) return { running: false };
+  return await mobileMirror.getInfo(preferredIp || null);
+});
+ipcMain.handle('regenerate-mobile-mirror-token', async (_, preferredIp) => {
+  if (!mobileMirror) return { running: false };
+  return await mobileMirror.regenerateToken(preferredIp || null);
+});
+ipcMain.handle('toggle-mobile-mirror', async (_, enable) => {
+  if (!mobileMirror) return { running: false };
+  if (enable) {
+    return await mobileMirror.start();
+  }
+  await mobileMirror.stop();
+  return await mobileMirror.getInfo();
+});

@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Live Chat Mirror</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --bg: #0a0d14;
+    --card: #121722;
+    --border: rgba(29, 158, 117, 0.28);
+    --accent: #1D9E75;
+    --accent2: #0F6E56;
+    --text: rgba(255, 255, 255, 0.94);
+    --text-muted: rgba(255, 255, 255, 0.58);
+    --text-dim: rgba(255, 255, 255, 0.35);
+    --fs: 15px;
+  }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    overflow: hidden;
+  }
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    width: 100%;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #0f141e;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .tb-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #fbbf24;
+    flex-shrink: 0;
+  }
+  .dot.live { background: #22c55e; box-shadow: 0 0 8px rgba(34, 197, 94, 0.6); }
+  .dot.err { background: #ef4444; }
+  .model-pill {
+    font-size: 11px;
+    font-weight: 600;
+    color: #93c5fd;
+    background: rgba(59, 130, 246, 0.14);
+    border: 1px solid rgba(59, 130, 246, 0.32);
+    padding: 3px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 155px;
+  }
+  .tb-actions {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+  .btn-mini {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-mini:active { transform: scale(0.96); }
+  .btn-mini.on {
+    background: rgba(29, 158, 117, 0.2);
+    border-color: var(--accent);
+    color: #4ade80;
+  }
+
+  .chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .idle {
+    margin: auto;
+    text-align: center;
+    color: var(--text-muted);
+    max-width: 300px;
+    line-height: 1.5;
+    padding: 20px 12px;
+  }
+  .idle h2 { font-size: 16px; color: var(--text); margin-bottom: 6px; }
+  .idle p { font-size: 13px; }
+
+  .chat-pair { display: flex; flex-direction: column; gap: 8px; }
+  .bubble {
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: var(--fs);
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .bubble-q {
+    background: rgba(29, 158, 117, 0.12);
+    border: 1px solid rgba(29, 158, 117, 0.3);
+  }
+  .bubble-a {
+    background: var(--card);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .bubble-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 6px;
+    letter-spacing: 0.3px;
+  }
+  .bubble-a .bubble-label { color: #38bdf8; }
+  .badge-timer {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    font-variant-numeric: tabular-nums;
+  }
+  .badge-timer.ready {
+    background: rgba(29, 158, 117, 0.16);
+    color: #4ade80;
+    border-color: rgba(29, 158, 117, 0.4);
+  }
+  .badge-intent {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.2);
+    color: #a5b4fc;
+    border: 1px solid rgba(99, 102, 241, 0.32);
+  }
+
+  /* Spoken Teleprompter & Code Cards (matches desktop overlay) */
+  .teleprompter-card {
+    background: rgba(14, 165, 233, 0.10);
+    border: 1px solid rgba(56, 189, 248, 0.38);
+    border-left: 4px solid #38bdf8;
+    border-radius: 9px;
+    padding: 10px 12px;
+    margin: 4px 0 8px;
+  }
+  .teleprompter-card .tp-title {
+    color: #38bdf8;
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 6px;
+  }
+  .teleprompter-card ul { margin: 0; padding-left: 18px; }
+  .teleprompter-card li {
+    color: #f8fafc;
+    font-size: calc(var(--fs) + 0.5px);
+    line-height: 1.5;
+    margin: 5px 0;
+    font-weight: 500;
+  }
+  .teleprompter-card p, .teleprompter-card div:not(.tp-title) {
+    color: #f8fafc;
+    font-size: calc(var(--fs) + 0.5px);
+    line-height: 1.5;
+    margin: 4px 0;
+  }
+  .teleprompter-card strong { color: #38bdf8; }
+
+  .followup-card {
+    background: rgba(168, 85, 247, 0.10);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    border-left: 4px solid #a855f7;
+    border-radius: 9px;
+    padding: 10px 12px;
+    margin: 8px 0 4px;
+  }
+  .followup-card .fp-title {
+    color: #c084fc;
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 6px;
+  }
+  .followup-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: calc(var(--fs) - 1px);
+    margin: 6px 0;
+    color: #e9d5ff;
+  }
+  .followup-item span { flex: 1; }
+  .ask-pill {
+    background: rgba(168, 85, 247, 0.25);
+    border: 1px solid rgba(192, 132, 252, 0.45);
+    color: #f3e8ff;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 9px;
+    border-radius: 999px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .code-block-wrap {
+    margin: 8px 0;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid rgba(29, 158, 117, 0.28);
+    background: #080b11;
+  }
+  .code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 10px;
+    background: rgba(29, 158, 117, 0.12);
+    border-bottom: 1px solid rgba(29, 158, 117, 0.2);
+  }
+  .code-lang { font-size: 10px; color: #34d399; font-family: monospace; text-transform: uppercase; font-weight: 700; }
+  .code-copy-btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: var(--text);
+    border-radius: 5px;
+    padding: 3px 8px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  pre {
+    padding: 10px;
+    overflow-x: auto;
+    font-family: Consolas, Menlo, monospace;
+    font-size: calc(var(--fs) - 2px);
+    line-height: 1.45;
+    color: #d4d4d4;
+    -webkit-overflow-scrolling: touch;
+  }
+  code {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: Consolas, Menlo, monospace;
+    font-size: calc(var(--fs) - 1.5px);
+    color: #9cdcfe;
+  }
+  pre code { background: transparent; padding: 0; color: inherit; }
+
+  .md-table-wrap { width: 100%; overflow-x: auto; margin: 8px 0; border-radius: 7px; border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(0,0,0,0.3); }
+  .md-table { width: 100%; min-width: 300px; border-collapse: collapse; font-size: calc(var(--fs) - 2px); }
+  .md-table thead { background: rgba(29, 158, 117, 0.18); }
+  .md-table th { padding: 7px 9px; text-align: left; color: #34d399; border-bottom: 1px solid rgba(29, 158, 117, 0.35); }
+  .md-table td { padding: 6px 9px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); vertical-align: top; }
+
+  .bubble-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .pending-box {
+    display: none;
+    background: rgba(239, 159, 39, 0.14);
+    border-top: 2px solid #fbbf24;
+    padding: 10px 12px;
+    flex-shrink: 0;
+  }
+  .pending-q {
+    font-size: 13px;
+    line-height: 1.4;
+    max-height: 75px;
+    overflow-y: auto;
+    margin: 5px 0 8px;
+    color: #fef3c7;
+  }
+  .pending-btns { display: flex; gap: 8px; }
+  .pending-btns button {
+    flex: 1;
+    padding: 9px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+  }
+  .btn-go { background: linear-gradient(180deg, #1D9E75, #0F6E56); color: #fff; }
+  .btn-drop { background: rgba(240, 100, 100, 0.2); color: #fca5a5; border: 1px solid rgba(240, 100, 100, 0.4) !important; }
+
+  .bottom {
+    background: #0f141e;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .quick-row {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+  }
+  .quick-row .btn-mini { white-space: nowrap; padding: 6px 10px; font-size: 12px; }
+  .ask-row { display: flex; gap: 6px; }
+  .ask-row input {
+    flex: 1;
+    background: #0a0d14;
+    color: var(--text);
+    border: 1px solid rgba(29, 158, 117, 0.35);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+    outline: none;
+  }
+  .ask-row button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0 14px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .toast {
+    position: fixed;
+    top: 54px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, 0.94);
+    border: 1px solid var(--accent);
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    z-index: 999;
+    display: none;
+  }
+  .floating-jump {
+    position: fixed;
+    right: 12px;
+    bottom: 112px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    z-index: 50;
+  }
+  .jump-btn {
+    background: rgba(15, 23, 42, 0.9);
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    color: #38bdf8;
+    border-radius: 999px;
+    padding: 7px 11px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="tb-left">
+      <div class="dot" id="connDot"></div>
+      <span id="connLabel" style="font-size:12px; font-weight:700;">Connecting…</span>
+      <span class="model-pill" id="modelBadge">Loading…</span>
+    </div>
+    <div class="tb-actions">
+      <button type="button" class="btn-mini" onclick="adjustFont(-1)">A-</button>
+      <button type="button" class="btn-mini" onclick="adjustFont(1)">A+</button>
+      <button type="button" class="btn-mini" id="desktopOverlayBtn" onclick="sendAction('toggle-overlay')">🖥️ Hide</button>
+      <button type="button" class="btn-mini" onclick="sendAction('clear')">🧹</button>
+    </div>
+  </div>
+
+  <div class="chat" id="chatContainer">
+    <div class="idle" id="idleBox">
+      <h2>📱 Mobile Mirror Connected</h2>
+      <p>Live interviewer questions, spoken bullet cards, comparison tables, and code blocks appear here in real time.</p>
+    </div>
+  </div>
+
+  <div class="floating-jump">
+    <button type="button" class="jump-btn" onclick="scrollToLatestQuestion()">⬆ Q</button>
+    <button type="button" class="jump-btn" onclick="scrollToBottom(true)">⬇</button>
+  </div>
+
+  <div class="pending-box" id="pendingBox">
+    <div style="font-size:11px; font-weight:700; color:#fbbf24; text-transform:uppercase;">⏸ Question Captured</div>
+    <div class="pending-q" id="pendingQText"></div>
+    <div class="pending-btns">
+      <button type="button" class="btn-go" onclick="sendAction('send-pending')">✋ Answer Now</button>
+      <button type="button" class="btn-drop" onclick="sendAction('discard-pending')">↩ Reject</button>
+    </div>
+  </div>
+
+  <div class="bottom">
+    <div class="quick-row">
+      <button type="button" class="btn-mini" onclick="sendAction('capture-screen')">📸 Screen</button>
+      <button type="button" class="btn-mini" onclick="sendAction('trigger-answer')">⚡ Answer</button>
+      <button type="button" class="btn-mini" id="followUpBtn" onclick="sendAction('toggle-followup')">🔁 Follow-up: OFF</button>
+      <button type="button" class="btn-mini on" id="autoScrollBtn" onclick="toggleAutoScroll()">📌 Auto-Jump: ON</button>
+    </div>
+    <div class="ask-row">
+      <input type="text" id="mobileInput" placeholder="Type question or follow-up…" onkeydown="if(event.key==='Enter') submitMobileQuestion()">
+      <button type="button" onclick="submitMobileQuestion()">Send</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const TOKEN = params.get('token') || '';
+// Load shared markdown renderer synchronously so renderMarkdown is available before socket events arrive.
+document.write('<script src="/markdown.js?token=' + encodeURIComponent(TOKEN) + '"><\/script>');
+</script>
+<script>
+const $ = (id) => document.getElementById(id);
+let ws = null;
+let fontSize = Number(localStorage.getItem('mobile_fs') || 15);
+let autoJump = true;
+let interimEl = null;
+let activeTimers = new Map();
+const pairMap = new Map(); // pairId -> { data, wrapper, ansEl, timerEl }
+
+function applyFontSize() {
+  fontSize = Math.max(12, Math.min(24, fontSize));
+  document.documentElement.style.setProperty('--fs', fontSize + 'px');
+  localStorage.setItem('mobile_fs', String(fontSize));
+}
+applyFontSize();
+
+function adjustFont(delta) {
+  fontSize += delta;
+  applyFontSize();
+  showToast('Font ' + fontSize + 'px');
+}
+
+function showToast(text) {
+  const t = $('toast');
+  t.textContent = text;
+  t.style.display = 'block';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.display = 'none'; }, 2000);
+}
+
+function copyText(text, msg = 'Copied!') {
+  if (!text) return;
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => showToast(msg)).catch(() => legacyCopy(text, msg));
+  } else {
+    legacyCopy(text, msg);
+  }
+}
+
+function legacyCopy(text, msg) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try {
+    document.execCommand('copy');
+    showToast(msg);
+  } catch {
+    showToast('Copy failed');
+  }
+  ta.remove();
+}
+
+window.copyCodeBlock = function (btn) {
+  const wrap = btn && btn.closest('.code-block-wrap');
+  const code = wrap && wrap.querySelector('pre code');
+  if (!code) return;
+  copyText(code.textContent, 'Code copied!');
+  const orig = btn.textContent;
+  btn.textContent = '✓ Copied';
+  setTimeout(() => { btn.textContent = orig; }, 1500);
+};
+
+window.sendFollowUpFromPill = function (btn) {
+  const q = btn && btn.dataset && btn.dataset.q ? decodeURIComponent(btn.dataset.q) : '';
+  if (q) sendAction('ask', { question: q });
+};
+
+function requestWakeLock() {
+  if (navigator.wakeLock && typeof navigator.wakeLock.request === 'function') {
+    navigator.wakeLock.request('screen').catch(() => {});
+  }
+}
+document.addEventListener('click', requestWakeLock, { once: true });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') requestWakeLock();
+});
+
+function toggleAutoScroll() {
+  autoJump = !autoJump;
+  const btn = $('autoScrollBtn');
+  btn.textContent = autoJump ? '📌 Auto-Jump: ON' : '📌 Auto-Jump: OFF';
+  btn.classList.toggle('on', autoJump);
+}
+
+function scrollToBottom(smooth = false) {
+  const c = $('chatContainer');
+  if (!c) return;
+  c.scrollTo({ top: c.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+}
+
+function scrollToLatestQuestion() {
+  const c = $('chatContainer');
+  const pairs = c.querySelectorAll('.chat-pair');
+  const last = pairs[pairs.length - 1];
+  if (last) c.scrollTo({ top: Math.max(0, last.offsetTop - 8), behavior: 'smooth' });
+}
+
+function updatePendingBanner(text) {
+  const box = $('pendingBox');
+  const txt = $('pendingQText');
+  if (!text) {
+    box.style.display = 'none';
+    txt.textContent = '';
+  } else {
+    box.style.display = 'block';
+    txt.textContent = text;
+  }
+}
+
+function updateInterimBubble(text) {
+  const clean = String(text || '').trim();
+  if (!clean) {
+    if (interimEl) { interimEl.remove(); interimEl = null; }
+    return;
+  }
+  const idle = $('idleBox');
+  if (idle) idle.style.display = 'none';
+  if (!interimEl) {
+    interimEl = document.createElement('div');
+    interimEl.className = 'chat-pair';
+    interimEl.innerHTML = '<div class="bubble bubble-q" style="border-color:rgba(245,158,11,0.45);background:rgba(245,158,11,0.08);"><div class="bubble-label" style="color:#fbbf24"><span>🎙️ Interviewer (Listening…)</span></div><div class="interim-body" style="color:#fef3c7;"></div></div>';
+    $('chatContainer').appendChild(interimEl);
+  }
+  interimEl.querySelector('.interim-body').textContent = clean;
+  if (autoJump) scrollToBottom(false);
+}
+
+function clearTimers() {
+  activeTimers.forEach((id) => clearInterval(id));
+  activeTimers.clear();
+}
+
+function createOrUpdatePair(pairData, jumpOnCreate = true) {
+  if (interimEl) { interimEl.remove(); interimEl = null; }
+  const idle = $('idleBox');
+  if (idle) idle.style.display = 'none';
+
+  let entry = pairMap.get(pairData.id);
+  if (!entry) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'chat-pair';
+
+    const qBubble = document.createElement('div');
+    qBubble.className = 'bubble bubble-q';
+    if (pairData.rejected) {
+      qBubble.style.borderColor = 'rgba(240,100,100,0.4)';
+      qBubble.style.background = 'rgba(240,100,100,0.08)';
+    }
+
+    const qLabel = document.createElement('div');
+    qLabel.className = 'bubble-label';
+    if (pairData.rejected) qLabel.style.color = '#f09595';
+    const qLeft = document.createElement('span');
+    qLeft.textContent = pairData.rejected ? '✕ Rejected — not sent' : '🎙️ Interviewer';
+    qLabel.appendChild(qLeft);
+    if (pairData.intent && !pairData.rejected) {
+      const ib = document.createElement('span');
+      ib.className = 'badge-intent';
+      ib.textContent = '🎯 ' + pairData.intent;
+      qLabel.appendChild(ib);
+    }
+
+    const qBody = document.createElement('div');
+    qBody.textContent = pairData.question || '';
+    qBubble.appendChild(qLabel);
+    qBubble.appendChild(qBody);
+    wrapper.appendChild(qBubble);
+
+    let ansEl = null;
+    let timerEl = null;
+    let actionsEl = null;
+    if (!pairData.rejected) {
+      const aBubble = document.createElement('div');
+      aBubble.className = 'bubble bubble-a';
+
+      const aLabel = document.createElement('div');
+      aLabel.className = 'bubble-label';
+      const aTitle = document.createElement('span');
+      aTitle.textContent = '⚡ AI Answer';
+      timerEl = document.createElement('span');
+      timerEl.className = 'badge-timer';
+      timerEl.textContent = '⏱️ 0.0s';
+      aLabel.appendChild(aTitle);
+      aLabel.appendChild(timerEl);
+
+      ansEl = document.createElement('div');
+      actionsEl = document.createElement('div');
+      actionsEl.className = 'bubble-actions';
+      actionsEl.style.display = 'none';
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'btn-mini';
+      copyBtn.textContent = '📋 Copy Answer';
+      copyBtn.onclick = () => copyText(entry.data.answer || ansEl.innerText, 'Answer copied!');
+      actionsEl.appendChild(copyBtn);
+
+      aBubble.appendChild(aLabel);
+      aBubble.appendChild(ansEl);
+      aBubble.appendChild(actionsEl);
+      wrapper.appendChild(aBubble);
+    }
+
+    $('chatContainer').appendChild(wrapper);
+    entry = { data: { ...pairData }, wrapper, ansEl, timerEl, actionsEl, renderPending: false, lastRender: 0 };
+    pairMap.set(pairData.id, entry);
+
+    if (!pairData.done && !pairData.rejected && timerEl) {
+      const tId = setInterval(() => {
+        if (entry.data.done) {
+          clearInterval(tId);
+          activeTimers.delete(pairData.id);
+          return;
+        }
+        const sec = ((Date.now() - (entry.data.startTime || Date.now())) / 1000).toFixed(1);
+        timerEl.textContent = entry.data.ttftSec ? `⚡ ${entry.data.ttftSec}s · ⏱️ ${sec}s` : `⏱️ ${sec}s`;
+        if (entry.data.ttftSec) timerEl.classList.add('ready');
+      }, 150);
+      activeTimers.set(pairData.id, tId);
+    }
+
+    if (jumpOnCreate && autoJump) {
+      $('chatContainer').scrollTo({ top: Math.max(0, wrapper.offsetTop - 8), behavior: 'smooth' });
+    }
+  } else {
+    entry.data = { ...pairData };
+  }
+
+  renderPairAnswer(entry, true);
+  return entry;
+}
+
+function renderPairAnswer(entry, forceImmediate = false) {
+  if (!entry || !entry.ansEl) return;
+  const doRender = () => {
+    entry.ansEl.innerHTML = renderMarkdown(entry.data.answer || '');
+    entry.lastRender = Date.now();
+    entry.renderPending = false;
+    if (entry.data.done && entry.actionsEl) {
+      entry.actionsEl.style.display = 'flex';
+    }
+    if (entry.timerEl) {
+      if (entry.data.done) {
+        const dur = entry.data.durationSec != null ? entry.data.durationSec : '?';
+        entry.timerEl.textContent = entry.data.ttftSec ? `⚡ ${entry.data.ttftSec}s · ⏱️ ${dur}s` : `✓ ${dur}s`;
+        entry.timerEl.classList.add('ready');
+      } else if (entry.data.ttftSec) {
+        entry.timerEl.classList.add('ready');
+      }
+    }
+  };
+
+  if (forceImmediate) {
+    doRender();
+    return;
+  }
+  if (!entry.renderPending) {
+    const elapsed = Date.now() - entry.lastRender;
+    const wait = elapsed >= 65 ? 0 : 65 - elapsed;
+    entry.renderPending = true;
+    setTimeout(() => requestAnimationFrame(doRender), wait);
+  }
+}
+
+function applyControlState(patch) {
+  if (!patch) return;
+  if (patch.model && (patch.model.model || patch.model.provider)) {
+    const m = patch.model.model || patch.model.provider;
+    $('modelBadge').textContent = m;
+  }
+  if (patch.followUp !== undefined) {
+    const btn = $('followUpBtn');
+    btn.textContent = patch.followUp ? '🔁 Follow-up: ON' : '🔁 Follow-up: OFF';
+    btn.classList.toggle('on', !!patch.followUp);
+  }
+  if (patch.overlayVisible !== undefined) {
+    const btn = $('desktopOverlayBtn');
+    btn.textContent = patch.overlayVisible ? '🖥️ Hide' : '🖥️ Show';
+    btn.classList.toggle('on', !patch.overlayVisible);
+  }
+}
+
+function resetChatView() {
+  clearTimers();
+  pairMap.clear();
+  interimEl = null;
+  updatePendingBanner(null);
+  $('chatContainer').innerHTML = '';
+  const idle = document.createElement('div');
+  idle.className = 'idle';
+  idle.id = 'idleBox';
+  idle.innerHTML = '<h2>📱 Mobile Mirror Ready</h2><p>Waiting for next question…</p>';
+  $('chatContainer').appendChild(idle);
+}
+
+function sendAction(action, extra = {}) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showToast('Reconnecting…');
+    return;
+  }
+  ws.send(JSON.stringify({ action, ...extra }));
+}
+
+function submitMobileQuestion() {
+  const input = $('mobileInput');
+  const q = input.value.trim();
+  if (!q) return;
+  sendAction('ask', { question: q });
+  input.value = '';
+  input.blur();
+}
+
+function connectSocket() {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${proto}//${window.location.host}/?token=${encodeURIComponent(TOKEN)}`;
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    $('connDot').className = 'dot live';
+    $('connLabel').textContent = 'Live';
+    requestWakeLock();
+  };
+
+  ws.onmessage = (evt) => {
+    let msg;
+    try { msg = JSON.parse(evt.data); } catch { return; }
+
+    if (msg.type === 'snapshot') {
+      const s = msg.state || {};
+      resetChatView();
+      applyControlState(s);
+      if (s.interviewerInterim) updateInterimBubble(s.interviewerInterim);
+      updatePendingBanner(s.pendingQuestion);
+      (s.pairs || []).forEach((p, idx, arr) => createOrUpdatePair(p, idx === arr.length - 1));
+      if (!s.pairs || s.pairs.length === 0) {
+        const idle = $('idleBox');
+        if (idle) idle.style.display = 'block';
+      }
+      return;
+    }
+
+    if (msg.type === 'question-asked' && msg.pair) {
+      updatePendingBanner(null);
+      createOrUpdatePair(msg.pair, true);
+    } else if (msg.type === 'interviewer-interim') {
+      updateInterimBubble(msg.text);
+    } else if (msg.type === 'answer-chunk') {
+      const entry = pairMap.get(msg.pairId);
+      if (entry) {
+        entry.data.answer += msg.chunk || '';
+        if (msg.ttftSec != null) entry.data.ttftSec = msg.ttftSec;
+        renderPairAnswer(entry, false);
+      }
+    } else if (msg.type === 'answer-done') {
+      const entry = pairMap.get(msg.pairId);
+      if (entry) {
+        entry.data.done = true;
+        if (msg.durationSec != null) entry.data.durationSec = msg.durationSec;
+        if (msg.ttftSec != null) entry.data.ttftSec = msg.ttftSec;
+        renderPairAnswer(entry, true);
+      }
+    } else if (msg.type === 'reasoning-status') {
+      const last = Array.from(pairMap.values()).pop();
+      if (last && !last.data.done && last.timerEl && msg.isReasoning && !last.data.ttftSec) {
+        last.timerEl.textContent = '🤔 Thinking…';
+      }
+    } else if (msg.type === 'answer-clear') {
+      resetChatView();
+    } else if (msg.type === 'pending-question') {
+      updatePendingBanner(msg.text || '');
+    } else if (msg.type === 'pending-question-rejected' && msg.pair) {
+      updatePendingBanner(null);
+      createOrUpdatePair(msg.pair, true);
+    } else if (msg.type === 'pending-question-cleared') {
+      updatePendingBanner(null);
+    } else if (msg.type === 'state') {
+      applyControlState(msg.patch);
+    }
+  };
+
+  ws.onclose = (ev) => {
+    $('connDot').className = ev.code === 4403 ? 'dot err' : 'dot';
+    $('connLabel').textContent = ev.code === 4403 ? 'Expired QR' : 'Reconnecting…';
+    if (ev.code !== 4403) {
+      setTimeout(connectSocket, 1500);
+    }
+  };
+}
+
+connectSocket();
+</script>
+</body>
+</html>

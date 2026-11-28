@@ -178,6 +178,7 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
     <span class="tb-ver">v2.0</span>
   </div>
   <div class="tb-btns">
+    <button type="button" class="tb-btn" id="mobileQrHeaderBtn" onclick="openMobileQrModal()" title="Open Mobile Chat Mirror QR Code" style="width:auto; padding:0 8px; gap:4px; font-size:11px; font-weight:600; color:var(--accent); border-color:rgba(29,158,117,0.35);">📱 QR</button>
     <button type="button" class="tb-btn" id="titlebarMinBtn" onclick="minimizeControl()" title="Minimize" aria-label="Minimize">
       <svg width="10" height="2" viewBox="0 0 10 2" fill="currentColor"><rect width="10" height="2" rx="1"/></svg>
     </button>
@@ -494,8 +495,9 @@ kbd{font-size:10px;background:var(--bg3);border:1px solid var(--border2);border-
           <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
           <div class="wave-bar"></div>
         </div>
-        <div class="mic-btn-row" style="margin-bottom:8px;">
-          <button class="mic-btn btn-primary" id="startInterviewBtn" onclick="startFullInterview()" style="width:100%; background:var(--accent);border-color:var(--accent);color:#fff;font-size:14px;padding:12px;">⚡ Start Interview</button>
+        <div class="mic-btn-row" style="margin-bottom:8px; display:flex; gap:8px;">
+          <button class="mic-btn btn-primary" id="startInterviewBtn" onclick="startFullInterview()" style="flex:1; background:var(--accent);border-color:var(--accent);color:#fff;font-size:14px;padding:12px;">⚡ Start Interview</button>
+          <button type="button" class="mic-btn" id="liveMobileQrBtn" onclick="openMobileQrModal()" style="flex:0 0 auto; white-space:nowrap; padding:12px 14px; font-size:12px; font-weight:600; background:var(--bg3); color:var(--accent); border:1px solid rgba(29,158,117,0.4);" title="Scan QR to view live chat on mobile browser">📱 Mobile QR</button>
         </div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; background:var(--bg3); padding:8px; border-radius:6px; border:1px solid var(--border);">
            <label style="font-size:12px; font-weight:600; color:var(--text1); cursor:pointer; display:flex; align-items:center; gap:6px; flex:1;">
@@ -5326,6 +5328,110 @@ function pinDeepseekResultToContext() {
   closeDeepseekWebSearchModal();
 }
 
+let mobileMirrorInfo = null;
+
+function updateMobileClientBadges(count) {
+  const n = Number(count || 0);
+  const hdr = $('mobileQrHeaderBtn');
+  const liveBtn = $('liveMobileQrBtn');
+  const modalBadge = $('mobileQrStatusBadge');
+  if (hdr) {
+    hdr.textContent = n > 0 ? `📱 ${n} Live` : '📱 QR';
+    hdr.style.color = n > 0 ? '#4ade80' : 'var(--accent)';
+    hdr.style.borderColor = n > 0 ? 'rgba(74,222,128,0.55)' : 'rgba(29,158,117,0.35)';
+  }
+  if (liveBtn) {
+    liveBtn.textContent = n > 0 ? `📱 Mobile (${n} Live)` : '📱 Mobile QR';
+  }
+  if (modalBadge) {
+    const running = mobileMirrorInfo ? mobileMirrorInfo.running : true;
+    if (!running) {
+      modalBadge.textContent = '⚫ Server Stopped';
+      modalBadge.style.color = 'var(--danger)';
+    } else if (n > 0) {
+      modalBadge.textContent = `🟢 ${n} Phone${n > 1 ? 's' : ''} Connected`;
+      modalBadge.style.color = '#4ade80';
+    } else {
+      modalBadge.textContent = '🟡 Waiting for Phone Scan';
+      modalBadge.style.color = '#fbbf24';
+    }
+  }
+}
+
+ipcRenderer.on('mobile-mirror-clients', (_, count) => {
+  updateMobileClientBadges(count);
+});
+
+async function refreshMobileQrModal(preferredIp = null) {
+  try {
+    const info = await ipcRenderer.invoke('get-mobile-mirror-info', preferredIp);
+    mobileMirrorInfo = info;
+    const toggleBtn = $('mobileMirrorToggleBtn');
+    const ipSel = $('mobileIpSelect');
+    const imgEl = $('mobileQrImg');
+    const urlInput = $('mobileQrUrl');
+
+    if (toggleBtn) {
+      toggleBtn.textContent = info.running ? '⏸ Pause Mirror' : '▶ Start Mirror';
+    }
+    if (ipSel) {
+      const list = info.interfaces || [];
+      ipSel.innerHTML = list.length
+        ? list.map(i => `<option value="${esc(i.address)}" ${i.address === info.activeIp ? 'selected' : ''}>${esc(i.name)} (${esc(i.address)})</option>`).join('')
+        : `<option value="127.0.0.1">Localhost (127.0.0.1)</option>`;
+    }
+    if (imgEl && info.qrDataUrl) {
+      imgEl.src = info.qrDataUrl;
+      imgEl.style.opacity = info.running ? '1' : '0.35';
+    }
+    if (urlInput) {
+      urlInput.value = info.url || '';
+    }
+    updateMobileClientBadges(info.connectedClients || 0);
+  } catch (err) {
+    setStatus('❌ Mobile QR error: ' + err.message);
+  }
+}
+
+async function openMobileQrModal() {
+  const modal = $('mobileQrModal');
+  if (modal) modal.style.display = 'flex';
+  await refreshMobileQrModal();
+}
+
+function closeMobileQrModal() {
+  const modal = $('mobileQrModal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function handleMobileIpChange() {
+  const ip = $('mobileIpSelect')?.value || null;
+  await refreshMobileQrModal(ip);
+}
+
+async function regenerateMobileQr() {
+  const ip = $('mobileIpSelect')?.value || null;
+  mobileMirrorInfo = await ipcRenderer.invoke('regenerate-mobile-mirror-token', ip);
+  await refreshMobileQrModal(ip);
+  setStatus('🔄 Generated new Mobile QR access token');
+}
+
+async function toggleMobileMirrorEnabled() {
+  const next = !(mobileMirrorInfo && mobileMirrorInfo.running);
+  mobileMirrorInfo = await ipcRenderer.invoke('toggle-mobile-mirror', next);
+  await refreshMobileQrModal($('mobileIpSelect')?.value || null);
+  setStatus(next ? '📱 Mobile QR server started' : '⏸ Mobile QR server paused');
+}
+
+function copyMobileQrUrl() {
+  const url = $('mobileQrUrl')?.value || '';
+  if (!url) return;
+  try {
+    require('electron').clipboard.writeText(url);
+    setStatus('📋 Mobile mirror link copied');
+  } catch (_) {}
+}
+
 </script>
 
 <div class="prompt-preview" id="sessionViewerModal" style="display:none;z-index:9999;">
@@ -5372,6 +5478,44 @@ Enter a search query (e.g. "Salesforce Spring 26 release notes") or a URL (e.g. 
     <div class="prompt-actions" style="display:flex; justify-content:space-between; align-items:center;">
       <button class="btn-secondary" id="deepseekToolPinBtn" style="display:none;" onclick="pinDeepseekResultToContext()">📌 Pin to Interview Reference</button>
       <button class="btn-secondary" onclick="closeDeepseekWebSearchModal()" style="margin-left:auto;">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="prompt-preview" id="mobileQrModal" style="display:none;z-index:9999;">
+  <div class="prompt-card" style="width:430px; max-width:94vw;">
+    <div class="prompt-head">
+      <div>
+        <div class="prompt-title">📱 Mobile Live Chat Mirror</div>
+        <div class="hint" id="mobileQrStatusBadge" style="font-weight:600; margin-top:2px;">🟡 Waiting for Phone Scan</div>
+      </div>
+      <button class="btn-sm" onclick="closeMobileQrModal()" style="margin-left:auto;">✕</button>
+    </div>
+    <div class="prompt-body" style="align-items:center; text-align:center; padding:16px; gap:12px;">
+      <div style="background:#ffffff; padding:10px; border-radius:10px; display:inline-flex; box-shadow:0 4px 20px rgba(0,0,0,0.4);">
+        <img id="mobileQrImg" alt="Scan QR code with phone" style="width:210px; height:210px; display:block;" />
+      </div>
+      <div style="width:100%; text-align:left;">
+        <div class="lbl" style="margin-bottom:4px;">Wi-Fi / LAN Interface</div>
+        <select id="mobileIpSelect" onchange="handleMobileIpChange()" style="font-size:12px; padding:6px 8px;"></select>
+      </div>
+      <div style="width:100%; display:flex; gap:6px;">
+        <input type="text" id="mobileQrUrl" readonly style="flex:1; font-size:11px; font-family:Consolas,monospace; padding:6px 8px;" />
+        <button class="btn-sm" onclick="copyMobileQrUrl()">📋 Copy</button>
+      </div>
+      <div style="font-size:11px; color:var(--text2); line-height:1.45; text-align:left; background:var(--bg3); padding:8px 10px; border-radius:6px; border:1px solid var(--border); width:100%;">
+        1. Connect your phone &amp; laptop to the <strong>same Wi-Fi</strong>.<br>
+        2. Scan the QR code with your phone camera to open the live chat.<br>
+        3. Press <strong>Alt+H</strong> anytime to hide the desktop overlay while screen sharing.<br>
+        <span style="color:var(--text3);">Tip: If Public Wi-Fi firewall blocks your phone, allow Electron when prompted or switch Wi-Fi to Private.</span>
+      </div>
+    </div>
+    <div class="prompt-actions" style="justify-content:space-between;">
+      <button class="btn-secondary" id="mobileMirrorToggleBtn" onclick="toggleMobileMirrorEnabled()">⏸ Pause Mirror</button>
+      <div style="display:flex; gap:6px;">
+        <button class="btn-secondary" onclick="regenerateMobileQr()">🔄 New QR</button>
+        <button class="btn-primary" onclick="closeMobileQrModal()">Done</button>
+      </div>
     </div>
   </div>
 </div>
